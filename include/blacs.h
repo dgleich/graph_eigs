@@ -16,6 +16,8 @@ extern void   Cigebr2d(int ConTxt, char *scope, char *top, int m, int n, int *A,
               int lda, int rsrc, int csrc);
 extern void   Cdgebr2d(int ConTxt, char *scope, char *top, int m, int n, double *A,
               int lda, int rsrc, int csrc);
+extern void   Cdgsum2d(int ConTxt, char *scope, char *top, int m, int n, double *A,
+              int lda, int rdest, int cdest);
 
 
 

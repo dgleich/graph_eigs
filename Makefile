@@ -5,7 +5,7 @@ FC = mpif77
 CC = mpic++
 FFLAGS += $(OPTFLAG)
 CXXFLAGS += -Wall -DBLACS_ALL -Iinclude -Wno-write-strings $(OPTFLAG)
-LDLIBS += -lscalapack-openmpi -lblacsCinit-openmpi -lblacs-openmpi -lpthread
+LDLIBS += -lscalapack-openmpi -lblacsCinit-openmpi -lblacs-openmpi -llapack -lblas -latlas
 
 PSTEGR_SRC := disnan.o   dlar1v.o  dlarrb2.o  dlarrc.o   dlarrd.o    \
               dlarre2.o  dlarrf.o  dlarrv2.o  dstegr2a.o  dstegr2.o    \

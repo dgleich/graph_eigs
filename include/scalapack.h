@@ -38,6 +38,15 @@ extern void pdsyev_( char *jobz, char *uplo, int *n,
                 double *a, int *ia, int *ja, int *desca, double *w, double *z, int *iz, int *jz, int *descz,
                 double *work, int *lwork, int *info );
 
+extern void dcombnrm2_(double *x, double *y);
+extern void pdtreecomb_(int *ictxt, char *scope, int *n, double *mine, int *rdest0, int *cdest0, void (*func)(double *x, double *y));
+
+extern void pdlaprnt_(int *m, int *n, double *a, int *ia, int *ja, int *desca,
+    int *iprnt, int *jprnt, char *cname,  int *nout, double *work, int clen);
+    
+extern void pdlared2d_(int *m, int *ia, int *ja, int *desc, double *byrow, double *byall, double *work, int *lwork);
+extern void pdlared1d_(int *n, int *ia, int *ja, int *desc, double *bycol, double *byall, double *work, int *lwork);
+
 
 int sl_gridreshape_(int *ctxt, int *pstart, int *row_major_in, int *row_major_out, int *P, int *Q);
 

@@ -4,6 +4,7 @@
  * @author David F. Gleich
  */
 
+#include <blas.h>
 #include <blacs.h>
 #include <scalapack.h>
 
@@ -75,6 +76,65 @@ struct scalapack_distributed_matrix {
         lj+=1;
         gi = indxl2g_(&li, &mb, &myrow, &izero, &nprow) - 1;
         gj = indxl2g_(&lj, &nb, &mycol, &izero, &npcol) - 1;
+    }
+    
+    
+    /** Compute the norm of each column and aggregate on the first grid row.
+     * @param norms 
+     *   the output vector of column norms, only specified on the first
+     *   row of the grid.
+     * @param broadcast 
+     *   if true, then broadcast the column norms to all processors
+     *   if false, then norms is only modified on processor 1
+     * 
+     * This routine needs 2*aq work memory on each processor, and another 
+     * n memory to hold the column norms on the first row.
+     */
+    void column_norms(std::vector<double>& norms) {
+        int ione=1;
+        // TODO improve the algorithm here to use a more stable accumulation
+        // TODO implement broadcast to send the results to all processors
+        std::vector< double > colnorms(aq,0.);
+        for (int j=0; j<aq; ++j) {
+            //double scale=0., sumsq=0.;
+            //dlassq_(&A.ap, &A.A[j*Aq], &ione, &scale, &sumsq);
+            //colnorms[j] = scale*scale*sumsq;
+            colnorms[j] = dnrm2_(&ap, &A[j*ap], &ione);
+            //printf("[%3i x %3i] colnorms[%i] = %g\n", myrow, mycol, j, colnorms[j]);
+            colnorms[j] *= colnorms[j];
+        }
+        
+        
+        Cdgsum2d(ictxt, "Columnwise", " ", 
+          1, aq, &colnorms[0], 1, 0, mycol);
+    
+        
+        // we can't use treecomb here because it doesn't work with vectors
+        // pdtreecomb_(&ictxt, "Columnwise", 
+        //    &aq, &colnorms[0], &izero, &mycol,
+        //    &dcombnrm2_);
+        
+        //printf("postcomb\n");
+        for (int j=0; j<aq; ++j) {
+            colnorms[j] = sqrt(colnorms[j]);
+            //printf("[%3i x %3i] colnorms[%i] = %g\n", myrow, mycol, j, colnorms[j]);
+        }
+        
+        // TODO fix this code to only write to processor 0
+        if (myrow == 0) {
+            norms.resize(m);
+            std::vector<double> work(aq,0.);
+            pdlared1d_( &m, &ione, &ione, desc, &colnorms[0], &norms[0],
+                &work[0], &aq);
+            if (mycol == 0) {
+                //printf("colnorms\n");
+                for (int j=0; j<m; ++j) {
+                    //printf("[%3i x %3i] norms[%i] = %g\n", myrow, mycol, j, norms[j]);
+                }
+            }
+        }
+        
+        
     }
 };
  
@@ -331,17 +391,21 @@ struct scalapack_symmetric_eigen {
             }
         }
     }
-
+    
     /** Compute the residuals for the eigenvectors */
     void residuals() {
         double done = 1., dzero = 0.;
         int ione=1;
         // repurpose lwork
         assert(lwork > A.ap*A.aq);
-        //memset(work, 0, sizeof(double)*A.ap*A.aq);
+        
+        scalapack_distributed_matrix resids;
+        resids.init(ictxt, n, n, A.nb, A.nb);
+        resids.A = work;
+        
         
         // compute -V*L
-        memcpy(work, Z.A, sizeof(double)*Z.ap*A.aq);
+        memcpy(work, Z.A, sizeof(double)*Z.ap*Z.aq);
         _scale_eigenvectors_in_work();
         
         // compute A*V-V*L for all the eigenvectors
@@ -352,9 +416,18 @@ struct scalapack_symmetric_eigen {
             &done,
             work, &ione, &ione, Z.desc);
             
+            
         // now compute norms of each column
         double maxresid = pdlange_("M", &n, &n, work, &ione, &ione, A.desc, &dzero);
         printf("Residual: %g\n", maxresid);
+        
+        std::vector<double> column_norms;
+        resids.column_norms(column_norms);
+        
+        int izero = 0, isix = 6;
+        char* cname="R";
+
+        pdlaprnt_(&n, &n, work, &ione, &ione, Z.desc, &izero, &izero, cname, &isix, work+Z.ap*Z.aq, 1);
         
     }
     
