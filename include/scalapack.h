@@ -27,6 +27,12 @@ extern void   pdgemm_( char *TRANSA, char *TRANSB, int * M, int * N, int * K, do
                                 double * BETA, double * C, int * IC, int * JC, int * DESCC );
 extern int    indxg2p_( int *indxglob, int *nb, int *iproc, int *isrcproc, int *nprocs);
 
+extern void pdsymm_( char* side, char* uplo, int *M, int *N, double *ALPHA, 
+    double *A, int *IA, int *JA, int *DESCA,
+    double *B, int *IB, int *JB, int *DESCB, 
+    double *BETA, 
+    double *C, int *IC, int *JC, int *DESCC );
+
 
 extern void pdsyev_( char *jobz, char *uplo, int *n,
                 double *a, int *ia, int *ja, int *desca, double *w, double *z, int *iz, int *jz, int *descz,

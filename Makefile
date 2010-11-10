@@ -17,10 +17,14 @@ PSTEGR := $(addprefix $(PSTEGR_DIR)/,$(PSTEGR_SRC))
 
 all : lapeigs
 
-.PHONY : clean
+.PHONY : clean test
+
+lapeigs.o :  scalapack_symmetric_eigen.hpp scalapack_symmetric_eigen.cc
 
 lapeigs :  lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o $(PSTEGR)
 
 clean:
 	rm -rf lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o $(PSTEGR)
 
+test: lapeigs
+	./lapeigs test/tapir.smat test.evals N

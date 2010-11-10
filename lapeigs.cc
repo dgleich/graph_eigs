@@ -17,22 +17,12 @@
 #include <blacs.h>
 #include <scalapack.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-extern void pdsyevr_( char *jobz, char *range, char *uplo, int *n, 
-                     double *a, int *ia, int *ja, int *desca, 
-                     double *vl, double *vu, int *il, int *iu, int *m, int *nz,
-                     double *w, double *z, int *iz, int *jz, int *descz, 
-                     double *work, int *lwork, int *iwork, int *liwork,
-                     int *info );
-#ifdef __cplusplus
-};
-#endif
+#include "scalapack_symmetric_eigen.hpp"
+
 #include "mpiutil.h"
 
 
-const int lapeigs_version = 1;
+const int lapeigs_version = 2;
 
 void write_header(void) {
     mpi_world_printf("\n");
@@ -277,7 +267,6 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
     int ictxt;
     int myrow, mycol;
     triplet_data g;
-    char *jobz;
     
     blacs_init();
     
@@ -291,8 +280,8 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
     assert(mycol < npcol);
     
     if (myrow == 0 && mycol == 0) {
-        if (argc != 4) {
-            printf("usage: lapeigs smatfile output jobz\n");
+        if (argc < 3 || argc > 5) {
+            printf("usage: lapeigs smatfile output [vectors=0|1|V] [minmemory=0|1]\n");
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
         const char* graphfilename = argv[1];
@@ -309,7 +298,19 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
         printf("broadcasting ...\n");
     } 
     
-    jobz = argv[3];
+    
+    bool vectors = false;
+    if (argc > 3) {
+        if (strcmp(argv[3],"V")==0 || strcmp(argv[3],"1")==0) {
+            vectors = true;
+        }
+    }
+    bool minmemory = true;
+    if (argc > 4) {
+        if (strcmp(argv[4],"0")==0) {
+            minmemory = false;
+        }
+    }
     
     g.broadcast(ictxt);
     
@@ -324,123 +325,54 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
      
     // todo put this into a sub-routine
     {
-        int izero=0, ione=1;
-        double dzero=0.;
         int n = g.nrows;
         // 176 seems like a good block size for a Nehalem, but
         // we need to check this number
         int nblock = std::min( 176, n/(2*nprow) );
         
-        // determine the size of the local dense matrix
-        int ap = numroc_(&n, &nblock, &myrow, &izero, &nprow);
-        int aq = numroc_(&n, &nblock, &mycol, &izero, &npcol);
-        
+        scalapack_distributed_matrix A;
+        A.init(ictxt, n, n, nblock, nblock);
+    
         // allocate local storage for the matrix
         printf("[%3i x %3i] allocating %Zu bytes for A (n=%i, nb=%i, ap=%i, aq=%i)\n",
-            myrow, mycol, ap*aq*sizeof(double),
-            n, nblock, ap, aq );
+            myrow, mycol, A.bytes(),
+            A.n, A.nb, A.ap, A.aq );
             
-        double *A = (double*)calloc( ap*aq, sizeof(double) );
-        if (!A) {
+        if (!A.allocate()) {
             printf("[%3i x %3i] couldn't allocate memory, exiting...", 
                myrow, mycol);
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
         
-        int descA[9];
-        int info;
-        descinit_(descA, &n, &n, &nblock, &nblock, &izero, &izero, 
-            &ictxt, &ap, &info);
-        
-        assign_graph_laplacian(descA, A, g);
+        assign_graph_laplacian(A.desc, A.A, g);
         
         Cblacs_barrier(ictxt, "A");
         
-        // allocate storage for W
-        printf("[%3i x %3i] allocating %Zu bytes for eigenvalues\n",
-            myrow, mycol, n*sizeof(double));
-        double *W = (double*)malloc( n*sizeof(double) );
-        if (!W) {
-            printf("[%3i x %3i] couldn't allocate memory, exiting...", 
-               myrow, mycol);
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }
-        // allocate storage for Z
-        int descZ[9];
-        descinit_(descZ, &n, &n, &nblock, &nblock, &izero, &izero, 
-            &ictxt, &ap, &info);
+        scalapack_symmetric_eigen P(A);
         
-        printf("[%3i x %3i] allocating %Zu bytes for eigenvectors\n",
-            myrow, mycol, (ap*aq)*sizeof(double));
-        double *Z = (double*)calloc( ap*aq, sizeof(double) );
-        if (!Z) {
-            printf("[%3i x %3i] couldn't allocate memory, exiting...", 
-               myrow, mycol);
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }              
+        P.setup(vectors, minmemory, false);
+
+        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem\n",
+            myrow, mycol, P.bytes());
+        printf("[%3i x %3i] %i eigenvector elements; %i workspace\n",
+            myrow, mycol, P.myZ*P.Z.ap*P.Z.aq, P.lwork);
         
-        
-        
-        // determine lwork size
-        int lwork = -1, liwork = -1;
-        double worksize[100];
-        int iworksize[100]; iworksize[0] = 0;
-        int nvals, nvecs;
-        mpi_world_printf("Workspace query\n");
-        pdsyevr_(jobz,"A","U",
-            &n, A, &ione, &ione, descA, // A
-            &dzero, &dzero, &izero, &izero, // eigenvalue range, not specified
-            &nvals, &nvecs, // eigenvalue output size
-            W, // eigenvalue output
-            Z, &ione, &ione, descZ, // eigenvector output
-            worksize, &lwork, iworksize, &liwork, // workspace
-            &info);
-            
-        //pdsyev_("N", "U", &n, A, &ione, &ione, descA, NULL, NULL,
-            //&ione, &ione, descA, worksize, &lwork, &info);
-        lwork = int(worksize[0]);
-        liwork = int(iworksize[0]);
-        
-        printf("[%3i x %3i] allocating %Zu bytes for work\n",
-            myrow, mycol, lwork*sizeof(double));
-        double *work = (double*)malloc( lwork*sizeof(double) );
-        if (!work) {
-            printf("[%3i x %3i] couldn't allocate memory, exiting...", 
-               myrow, mycol);
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }
-        
-        printf("[%3i x %3i] allocating %Zu bytes for iwork\n",
-            myrow, mycol, liwork*sizeof(int));
-        int *iwork = (int*)malloc( liwork*sizeof(int) );
-        if (!iwork) {
-            printf("[%3i x %3i] couldn't allocate memory, exiting...", 
-               myrow, mycol);
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }     
+        P.allocate();
     
-        
+        mpi_world_printf("Solving eigenproblem...\n");
         
         double t0 = MPI_Wtime();
-        pdsyevr_(jobz,"A","U",
-            &n, A, &ione, &ione, descA, // A
-            &dzero, &dzero, &izero, &izero, // eigenvalue range, not specified
-            &nvals, &nvecs, // eigenvalue output size
-            W, // eigenvalue output
-            Z, &ione, &ione, descA, // eigenvector output
-            work, &lwork, iwork, &liwork, // workspace
-            &info);
-            
-        /*pdsyev_("N", "U", 
-            &n, A, &ione, &ione, descA, 
-            W, 
-            Z, &ione, &ione, descA, work, &lwork, &info);*/
-            
+        P.compute();
         double dt = MPI_Wtime() - t0;
+        
+        if (vectors) {
+            P.residuals();
+        }
         
         if (myrow==0 && mycol==0){
             printf("Computation:\n");
-            printf("   jobz = %s\n", jobz);
+            printf(" vector = %i\n", (int)vectors);
+            printf(" memory = %i\n", (int)minmemory);
             printf("      n = %d\n", n);
             printf("   grid = (%d,%d)\n",nprow,npcol);
             printf("  procs = %d procs\n", nprow*npcol);
@@ -449,14 +381,17 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
         }
         
         if (myrow==0 && mycol==0) {
-            if (write_vector(argv[2], W, (size_t)n) == false) {
+            if (write_vector(argv[2], P.values, (size_t)n) == false) {
                 // error writint to argv[2], write to stdout
                 printf("Writing eigenvalues to stdout\n");
                 for (int i=0; i<n; ++i) {
-                    printf("W(%i) = %.18e\n", i+1, W[i]);
+                    printf("W(%i) = %.18e\n", i+1, P.values[i]);
                 }    
             }
         }
+        
+        P.free();
+        A.free();
     }
     
     Cblacs_barrier(ictxt, "A");
