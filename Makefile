@@ -21,7 +21,7 @@ all : lapeigs
 
 lapeigs.o :  scalapack_symmetric_eigen.hpp scalapack_symmetric_eigen.cc
 
-lapeigs :  lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o $(PSTEGR)
+lapeigs :  lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)
 
 clean:
 	rm -rf lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o $(PSTEGR)

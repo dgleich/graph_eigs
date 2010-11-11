@@ -75,6 +75,31 @@ bool write_vector(const char* filename, double *a, size_t n) {
     }
 }
 
+/** Write a matrix in fortran format (column-oriented) */
+bool write_matrix(const char* filename, double *a, size_t m, size_t n) {
+    FILE *f = fopen(filename, "wt");
+    if (f) {
+        for (size_t i=0; i<m; ++i) {
+            for (size_t j=0; j<n; ++j) {
+                int val = fprintf(f,"%.18e ", a[i+j*m]);
+                if (val < 0) {
+                    // something failed
+                    // TODO make this output the processor information in COMM_WORLD
+                    printf("output failed\n");
+                    fclose(f);
+                    return (false);
+                }
+            }
+            fprintf(f,"\n");
+        }
+        fclose(f);
+        return true;
+    } else {
+        printf("Could not open %s\n", filename);
+        return false;
+    }
+}
+
 /** 
  * Usage:
  * 
@@ -350,7 +375,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
         
         scalapack_symmetric_eigen P(A);
         
-        P.setup(vectors, minmemory, false);
+        P.setup(vectors, minmemory, true);
 
         printf("[%3i x %3i] allocating %Zu bytes for eigenproblem\n",
             myrow, mycol, P.bytes());
@@ -361,9 +386,33 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
     
         mpi_world_printf("Solving eigenproblem...\n");
         
-        double t0 = MPI_Wtime();
-        P.compute();
-        double dt = MPI_Wtime() - t0;
+        double t0;
+        
+        mpi_world_printf("Reducing to tridiagonal ...\n");
+        t0 = MPI_Wtime();
+        P.tridiag_reduce();
+        double dt_red = MPI_Wtime() - t0;
+            
+        if (myrow==0 && mycol==0) {
+            std::string str(argv[2]);
+            str += ".tridiag";
+            printf("Writing tridiagonal factors to %s...\n",
+                str.c_str());
+            if (write_matrix(str.c_str(), P.T, n, 2) == false) {
+                printf("Writing failed... outputing to stdout\n");
+                for (int i=0; i<n; ++i) {
+                    printf("W(%i,1) = %.18e;\n", i+1, P.T[i]);
+                    printf("W(%i,2) = %.18e;\n", i+1, P.T[i+n]);
+                }   
+            }
+        }
+        
+        mpi_world_printf("Runing MRRR ...\n");
+        t0 = MPI_Wtime();
+        P.tridiag_compute();
+        double dt_comp = MPI_Wtime() - t0;
+        
+        
         
         if (vectors) {
             std::vector<double> resids;
@@ -380,7 +429,9 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
             printf("   grid = (%d,%d)\n",nprow,npcol);
             printf("  procs = %d procs\n", nprow*npcol);
             printf("  block = %d\n", nblock);
-            printf("   time = %.2fs\n", dt);
+            printf(" rdtime = %.2fs\n", dt_red);
+            printf(" cptime = %.2fs\n", dt_comp);
+            printf("  ttime = %.2fs\n", dt_red+dt_comp);
         }
         
         if (myrow==0 && mycol==0) {

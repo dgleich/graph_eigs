@@ -35,6 +35,13 @@ extern void pdsyevr_( char *jobz, char *range, char *uplo, int *n,
                      double *w, double *z, int *iz, int *jz, int *descz, 
                      double *work, int *lwork, int *iwork, int *liwork,
                      int *info );
+                     
+extern void pdsyevr_tri_( char* jobc, char *jobz, char *range, char *uplo, int *n, 
+                     double *a, int *ia, int *ja, int *desca, 
+                     double *vl, double *vu, int *il, int *iu, int *m, int *nz,
+                     double *w, double *z, int *iz, int *jz, int *descz, 
+                     double *work, int *lwork, int *iwork, int *liwork,
+                     int *jstate, int *info );                     
 #ifdef __cplusplus
 };
 #endif
@@ -278,6 +285,7 @@ struct scalapack_symmetric_eigen {
     int lwork;
     int *iwork;
     int liwork;
+    int jstate[3];
     bool vectors;
     bool minmemory;
     bool tridiag;
@@ -461,6 +469,68 @@ struct scalapack_symmetric_eigen {
         
         Cblacs_gridinfo(ictxt, &nprow, &npcol, &myrow, &mycol);
         return nprow*npcol;
+    }
+    
+    void tridiag_reduce() {
+        // TODO add code to check for valid setup
+        int ione=1, izero=0, nvals, nvecs, info;
+        double dzero=0.;
+        char* jobz="N";
+        if (vectors) {
+            jobz="V";
+        }
+        
+        // save diagonal
+        _save_diagonal();
+        
+        pdsyevr_tri_("T",jobz,"A","U",
+            &n, A.A, &ione, &ione, A.desc, // A
+            &dzero, &dzero, &izero, &izero, // eigenvalue range, not specified
+            &nvals, &nvecs, // eigenvalue output size
+            values, // eigenvalue output
+            Z.A, &ione, &ione, Z.desc, // eigenvector output
+            work, &lwork, iwork, &liwork, // workspace
+            jstate, // job state
+            &info);
+            
+        assert(info == 0);
+            
+        // save the tridiagonal factors
+        for (int i=0; i<n; ++i) {
+            T[i] = work[jstate[0]+i-1];
+            T[i+n] = work[jstate[1]+i+jstate[2]-1];
+        }
+        T[2*n-1] = 0.; // set the final entry to 0
+        
+        
+    }
+    
+    void tridiag_compute() {
+        
+        int ione=1, izero=0, nvals, nvecs, info;
+        double dzero=0.;
+        char* jobz="N";
+        if (vectors) {
+            jobz="V";
+        }
+        
+        pdsyevr_tri_("D",jobz,"A","U",
+            &n, A.A, &ione, &ione, A.desc, // A
+            &dzero, &dzero, &izero, &izero, // eigenvalue range, not specified
+            &nvals, &nvecs, // eigenvalue output size
+            values, // eigenvalue output
+            Z.A, &ione, &ione, Z.desc, // eigenvector output
+            work, &lwork, iwork, &liwork, // workspace
+            jstate, // job state
+            &info);
+            
+        _restore_diagonal();
+            
+        assert(info == 0);
+        assert(nvals == n);
+        if (vectors) {
+            assert(nvecs == n);
+        }
     }
     
     void compute() {
