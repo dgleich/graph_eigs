@@ -120,7 +120,7 @@ struct graph_eigs_options {
     graph_eigs_options() 
     : verbose(false),  tridiag(false), 
       residuals(true), iparscores(false), vectors(false),
-      eigenvalues(false), eigenvectors(false),
+      eigenvalues(true), eigenvectors(false),
       matrix(normalized_laplacian_matrix),
       nb(176), minmemory(true)
     {}
@@ -201,7 +201,7 @@ struct graph_eigs_options {
     
     void setup() {
         if (output_name.size() == 0) {
-            output_name = graph_filename + get_type_as_string();
+            output_name = graph_filename + "." + get_type_as_string();
         }
         
         if (eigenvalues && values_filename.size() == 0) {

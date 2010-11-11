@@ -495,13 +495,14 @@ struct scalapack_symmetric_eigen {
             
         assert(info == 0);
             
-        // save the tridiagonal factors
-        for (int i=0; i<n; ++i) {
-            T[i] = work[jstate[0]+i-1];
-            T[i+n] = work[jstate[1]+i+jstate[2]-1];
+        if (tridiag) {
+            // save the tridiagonal factors
+            for (int i=0; i<n; ++i) {
+                T[i] = work[jstate[0]+i-1];
+                T[i+n] = work[jstate[1]+i+jstate[2]-1];
+            }
+            T[2*n-1] = 0.; // set the final entry to 0
         }
-        T[2*n-1] = 0.; // set the final entry to 0
-        
         
     }
     
@@ -604,8 +605,6 @@ struct scalapack_symmetric_eigen {
             Z.A, &ione, &ione, Z.desc,
             &done,
             work, &ione, &ione, Z.desc);
-        
-        
             
         // now compute norms of each column
         //double maxresid = pdlange_("M", &n, &n, work, &ione, &ione, A.desc, &dzero);

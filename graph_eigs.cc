@@ -114,6 +114,45 @@ void write_header(void) {
     }
 }
 
+struct wall_time_list {
+    typedef std::pair< std::string, double > event;
+    std::vector< event > events;
+    
+    double t0;
+    double ttime;
+    
+    void start_event( const char* name ) {
+        event e;
+        e.first = std::string(name);
+        e.second = -1;
+        events.push_back(e);
+        t0 = MPI_Wtime();
+    }
+    
+    void end_event() {
+        assert(events.size() > 0);
+        events.back().second = MPI_Wtime() - t0;
+    }
+    
+    void report_event( unsigned int indent = 0 ) {
+        assert(events.size() > 0);
+        event last = events.back();
+        while (indent > 0) {
+            printf(" ");
+            indent -= 1;
+        }
+        
+        double rtime = last.second;
+        if (rtime < 0) {
+            rtime = MPI_Wtime() - t0;
+        }
+        
+        printf("%s time: %.1lf sec.\n", last.first.c_str(), rtime); 
+    }
+};
+
+wall_time_list tlist;
+
 void broadcast_triplet_data(int ictxt, triplet_data& graph ) 
 {
     int nprow, npcol, myrow, mycol;
@@ -139,6 +178,54 @@ void broadcast_triplet_data(int ictxt, triplet_data& graph )
             printf("[%3i x %3i] received triplet data with %i edges\n", 
                 myrow, mycol, graph.nnz);
         }
+    }
+}
+
+bool write_vector(const char* filename, double *a, size_t n) {
+    FILE *f = fopen(filename, "wt");
+    if (f) {
+        while (n > 0) {
+            int val = fprintf(f,"%.18e\n",*a);
+            if (val < 0) {
+                // something failed
+                // TODO make this output the processor information in COMM_WORLD
+                printf("output failed\n");
+                fclose(f);
+                return (false);
+            }
+            n -= 1; 
+            a += 1; 
+        }
+        fclose(f);
+        return true;
+    } else {
+        printf("Could not open %s\n", filename);
+        return false;
+    }
+}
+
+/** Write a matrix in fortran format (column-oriented) */
+bool write_matrix(const char* filename, double *a, size_t m, size_t n) {
+    FILE *f = fopen(filename, "wt");
+    if (f) {
+        for (size_t i=0; i<m; ++i) {
+            for (size_t j=0; j<n; ++j) {
+                int val = fprintf(f,"%.18e ", a[i+j*m]);
+                if (val < 0) {
+                    // something failed
+                    // TODO make this output the processor information in COMM_WORLD
+                    printf("output failed\n");
+                    fclose(f);
+                    return (false);
+                }
+            }
+            fprintf(f,"\n");
+        }
+        fclose(f);
+        return true;
+    } else {
+        printf("Could not open %s\n", filename);
+        return false;
     }
 }
 
@@ -259,10 +346,12 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     if (root) {
         const char* gfile = opts.graph_filename.c_str();
         printf("Loading graph %s.\n", gfile);
+        tlist.start_event("load_graph");
         if (g.read_smat(gfile) == false) {
             printf("Error reading %s.\n", gfile);
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
+        tlist.end_event(); tlist.report_event(2);
         
         printf("\n");
         printf("Graph information\n");
@@ -282,6 +371,8 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     scalapack_distributed_matrix A;
     int n = g.nrows;
     A.init(ictxt, n, n, opts.nb, opts.nb);
+    
+    tlist.start_event("construct_matrix");
     
     // allocate local storage for the matrix
     if (opts.verbose) {
@@ -318,10 +409,92 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
             assert(false);
             break;
     }
+    tlist.end_event();
+    if (root) {
+        tlist.report_event(2);
+    }
     
     scalapack_symmetric_eigen P(A);
         
     P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag);
+    
+    if (opts.verbose) {
+        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
+            myrow, mycol, P.bytes(), P.myZ*P.Z.ap*P.Z.aq, P.lwork);
+    }
+    
+    if (!P.allocate()) {
+        printf("[%3i x %3i] couldn't allocate memory, exiting...", 
+           myrow, mycol);
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+    
+    if (opts.eigenvectors == false && opts.eigenvalues == false) {
+        mpi_world_printf("Computing tridiagonal redunction only.\n");
+        tlist.start_event("tridiag_reduce");
+        P.tridiag_reduce();
+        tlist.end_event();
+        if (root) { tlist.report_event(2); }
+    } else {
+        if (opts.eigenvectors == false) {
+            mpi_world_printf("Computing eigenvalues.\n");
+        } else {
+            mpi_world_printf("Computing eigenvalues and eigenvectors.\n");
+        }
+            
+        mpi_world_printf("  Reducing to tridiagonal.\n");
+        
+        tlist.start_event("tridiag_reduce");
+        P.tridiag_reduce();
+        tlist.end_event();
+        if (root) { tlist.report_event(4); }
+        
+        if (opts.tridiag && myrow==0 && mycol==0)  {
+            printf("  Writing tridiagonal factors to %s.\n",
+                opts.tridiag_filename.c_str());
+            if (write_matrix(opts.tridiag_filename.c_str(), P.T, n, 2) == false) {
+                printf("Writing failed... outputing to stdout\n");
+                for (int i=0; i<n; ++i) {
+                    printf("T(%i,1) = %.18e;\n", i+1, P.T[i]);
+                    printf("T(%i,2) = %.18e;\n", i+1, P.T[i+n]);
+                }   
+            }
+        }
+        
+        if (opts.eigenvectors == false) {
+            mpi_world_printf("  Finding eigenvalues.\n");    
+        } else {
+            mpi_world_printf("  Finding eigenvalues and eigenvectors.\n");
+        }
+        
+        tlist.start_event("eigensolve");
+        P.tridiag_compute();
+        tlist.end_event();
+        if (root) { tlist.report_event(4); }
+        
+        if (opts.eigenvalues && myrow==0 && mycol==0)  {
+            printf("  Writing eigenvalues to %s.\n",
+                opts.values_filename.c_str());
+            if (write_vector(opts.values_filename.c_str(), P.values, (size_t)n) == false) {
+                printf("Writing eigenvalues to stdout\n");
+                for (int i=0; i<n; ++i) {
+                    printf("W(%i) = %.18e;\n", i+1, P.values[i]);
+                }    
+            }
+        }
+        
+        if (opts.eigenvectors) {
+            if (opts.residuals) {
+                std::vector<double> resids;
+                P.residuals(resids);
+            }
+            if (opts.iparscores) {
+                std::vector<double> ipars;
+                P.Z.inverse_participation_ratios(ipars, true);  
+            }
+        }
+        
+    }
     
     return (0);
 }
@@ -355,8 +528,6 @@ int main(int argc, char **argv) {
     opts.distribute(); 
     
     write_header();
-    
-    
     
     // determine the number of processors to use in the square grid
     int np = (int)(floor(sqrt((double)size)));

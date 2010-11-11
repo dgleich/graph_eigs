@@ -1,0 +1,11 @@
+Does scalapack require the matrix size to be less than 2^31? i.e.
+smaller than 16 384?
+
+16301 vertices
+/home/dgleich/data/graph-db/snap/as-caida20040105.smat 
+
+16493 vertices
+/home/dgleich/data/graph-db/snap/as-caida20040202.smat
+# failed
+
+Turns out this was a bug with scalapack compiled on ubuntu
