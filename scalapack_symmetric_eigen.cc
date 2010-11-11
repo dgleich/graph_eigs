@@ -2,6 +2,24 @@
  * @file scalapack_symmetric_eigen.cc
  * Compute eigenvalues and eigenvectors of symmetric problems with scalapack
  * @author David F. Gleich
+ * 
+ * Notes
+ * -----
+ * 
+ * This code is rapidly evolving and the interface and abstractions haven't
+ * settled down yet.  Thus, documentation will be scattershot until that
+ * happens.
+ * 
+ * Todo
+ * ----
+ * TODO add debug mode for small problems to display intermediate data
+ * TODO check that all calloced memory is freed
+ * 
+ * History
+ * -------
+ * :2010-11-08: Initial version
+ * :2010-11-09: Added residuals
+ * :2010-11-10: Added initial tridiagonal reduction
  */
 
 #include <blas.h>
@@ -37,7 +55,7 @@ struct scalapack_distributed_matrix {
         nb = nb_;
         A = NULL;
         Cblacs_gridinfo(ictxt, &nprow, &npcol, &myrow, &mycol);
-        ap = numroc_(&n, &mb, &myrow, &izero, &nprow);
+        ap = numroc_(&m, &mb, &myrow, &izero, &nprow);
         aq = numroc_(&n, &nb, &mycol, &izero, &npcol);
         descinit_(desc, &m, &n, &mb, &nb, &izero, &izero, 
             &ictxt, &ap, &info);
@@ -69,6 +87,16 @@ struct scalapack_distributed_matrix {
             A = NULL;
         }
     }
+    
+    void print(int pi, int pj, char* cname, size_t cnamemax) {
+        int izero = 0, ione = 1, isix = 6;
+        std::vector<double> work(aq);
+        
+        int clen = strnlen(cname, cnamemax);
+        
+        pdlaprnt_(&m, &n, A, &ione, &ione, desc, 
+            &izero, &izero, cname, &isix, &work[0], clen);
+    }
 
     void local2global(int li, int lj, int& gi, int& gj) {
         int izero=0;
@@ -91,7 +119,7 @@ struct scalapack_distributed_matrix {
      * n memory to hold the column norms on the first row.
      */
     void column_norms(std::vector<double>& norms) {
-        int ione=1;
+        int izero=0,ione=1;
         // TODO improve the algorithm here to use a more stable accumulation
         // TODO implement broadcast to send the results to all processors
         std::vector< double > colnorms(aq,0.);
@@ -122,19 +150,104 @@ struct scalapack_distributed_matrix {
         
         // TODO fix this code to only write to processor 0
         if (myrow == 0) {
-            norms.resize(m);
-            std::vector<double> work(aq,0.);
-            pdlared1d_( &m, &ione, &ione, desc, &colnorms[0], &norms[0],
-                &work[0], &aq);
+            norms.resize(n);
+            int lwork = numroc_(&n, &nb, &izero, &izero, &npcol);
+            std::vector<double> work(lwork,0.);
+            pdlared1d_( &n, &ione, &ione, desc, &colnorms[0], &norms[0],
+                &work[0], &lwork);
             if (mycol == 0) {
                 //printf("colnorms\n");
-                for (int j=0; j<m; ++j) {
+                for (int j=0; j<n; ++j) {
                     //printf("[%3i x %3i] norms[%i] = %g\n", myrow, mycol, j, norms[j]);
                 }
             }
         }
+    }
+    
+    /** Compute the inverse participation ratios for the column of a matrix.
+     * 
+     * For a vector, it's inverse participation score is:
+     *  ipar(v) = sum(abs(v).^4)/((sum(abs(v)).^2)^2)
+     * and 1/ipar(v) is the number of effective non-zeros in the vector.
+     * 
+     * Consider uniform v, then ipar(v) = 1/n.  For v with a single
+     * nonzero, then ipar(v) = 1.
+     * 
+     * If the vectors are already normalized -- for instance when they are 
+     * eigenvectors, which are usually taken to be normalized --
+     * then we do not need to compute the denominator and save the work
+     * and memory in this case.
+     * 
+     * @param ipars 
+     *   the output vector of inverse participation scores, only specified on the first
+     *   row of the grid.
+     * 
+     * @param normalized
+     *   if true, then the matrix should already have normalized columns
+     * 
+     * This routine needs 2*aq work memory on each processor, and another 
+     * n memory to hold the par scores on the first processor row.
+     * If normalized is true, then it needs another ap work memory
+     * on each processor.
+     */
+    void inverse_participation_ratios(std::vector<double>& ipars, 
+        bool normalized) {
+        int izero=0.,ione=1;
+        std::vector<double> colnorms;
         
+        if (normalized == false) {
+            colnorms.resize(aq);
+            for (int j=0; j<aq; ++j) {
+                colnorms[j] = dnrm2_(&ap, &A[j*ap], &ione);
+                colnorms[j] *= colnorms[j];
+            }
+            Cdgsum2d(ictxt, "Columnwise", " ", 
+              1, aq, &colnorms[0], 1, 0, mycol);
         
+            for (int j=0; j<aq; ++j) {
+                colnorms[j] = sqrt(colnorms[j]);
+            }
+        }
+
+        // TODO implement broadcast to send the results to all processors
+        std::vector< double > localpar(aq,0.);
+        for (int j=0; j<aq; ++j) {
+            for (int i=0; i<ap; ++i) {
+                double score = fabs(A[j*ap+i]);
+                score *= score;
+                score *= score;
+                localpar[j] += score;
+            }
+            //printf("[%3i x %3i] localpar[%i] = %g\n", myrow, mycol, j, localpar[j]);
+        }
+
+        Cdgsum2d(ictxt, "Columnwise", " ", 
+          1, aq, &localpar[0], 1, 0, mycol);
+        
+        // TODO fix this code to only write to processor 0
+        if (myrow == 0) {
+            // rescale the normalized scores
+            if (normalized == false) {
+                for (int j=0; j<aq; ++j) {
+                    localpar[j] /= colnorms[j];
+                }
+            }
+            //printf("postcomb\n");
+            for (int j=0; j<aq; ++j) {
+                //printf("[%3i x %3i] localpar[%i] = %g\n", myrow, mycol, j, localpar[j]);
+            }
+            ipars.resize(n);
+            int lwork = numroc_(&n, &nb, &izero, &izero, &npcol);
+            std::vector<double> work(lwork,0.);
+            pdlared1d_( &n, &ione, &ione, desc, &localpar[0], &ipars[0],
+                &work[0], &lwork);
+            if (mycol == 0) {
+                //printf("ipars\n");
+                for (int j=0; j<m; ++j) {
+                    //printf("[%3i x %3i] ipars[%i] = %g\n", myrow, mycol, j, ipars[j]);
+                }
+            }
+        }
     }
 };
  
@@ -387,14 +500,21 @@ struct scalapack_symmetric_eigen {
         for (int i=0; i<Z.ap; ++i) {
             for (int j=0; j<Z.aq; ++j) {
                 Z.local2global(i, j, gi, gj);
-                    work[i+j*A.ap] *= -1.0*values[gj];
+                work[i+j*A.ap] *= -1.0*values[gj];
             }
         }
     }
     
-    /** Compute the residuals for the eigenvectors */
-    void residuals() {
-        double done = 1., dzero = 0.;
+    /** Compute the residuals for the eigenvectors 
+     * 
+     * This computes
+     *   residnorms(i) = ||A*v - v*l||
+     * 
+     * This will only store the vector of residuals on the 
+     * first row of the processor grid.
+     */
+    void residuals(std::vector<double> residnorms) {
+        double done = 1.;
         int ione=1;
         // repurpose lwork
         assert(lwork > A.ap*A.aq);
@@ -402,7 +522,6 @@ struct scalapack_symmetric_eigen {
         scalapack_distributed_matrix resids;
         resids.init(ictxt, n, n, A.nb, A.nb);
         resids.A = work;
-        
         
         // compute -V*L
         memcpy(work, Z.A, sizeof(double)*Z.ap*Z.aq);
@@ -415,20 +534,16 @@ struct scalapack_symmetric_eigen {
             Z.A, &ione, &ione, Z.desc,
             &done,
             work, &ione, &ione, Z.desc);
-            
+        
+        
             
         // now compute norms of each column
-        double maxresid = pdlange_("M", &n, &n, work, &ione, &ione, A.desc, &dzero);
-        printf("Residual: %g\n", maxresid);
+        //double maxresid = pdlange_("M", &n, &n, work, &ione, &ione, A.desc, &dzero);
+        // printf("Residual: %g\n", maxresid);
         
-        std::vector<double> column_norms;
-        resids.column_norms(column_norms);
+        resids.column_norms(residnorms);
         
-        int izero = 0, isix = 6;
-        char* cname="R";
-
-        pdlaprnt_(&n, &n, work, &ione, &ione, Z.desc, &izero, &izero, cname, &isix, work+Z.ap*Z.aq, 1);
-        
+        //resids.print(0,0,"R",1);
     }
     
     /** Free any memory allocated in this operation. */

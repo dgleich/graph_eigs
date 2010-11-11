@@ -366,7 +366,10 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
         double dt = MPI_Wtime() - t0;
         
         if (vectors) {
-            P.residuals();
+            std::vector<double> resids;
+            P.residuals(resids);
+            std::vector<double> ipars;
+            P.Z.inverse_participation_ratios(ipars, true);
         }
         
         if (myrow==0 && mycol==0){
@@ -385,7 +388,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
                 // error writint to argv[2], write to stdout
                 printf("Writing eigenvalues to stdout\n");
                 for (int i=0; i<n; ++i) {
-                    printf("W(%i) = %.18e\n", i+1, P.values[i]);
+                    printf("W(%i) = %.18e;\n", i+1, P.values[i]);
                 }    
             }
         }
