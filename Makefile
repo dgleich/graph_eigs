@@ -15,13 +15,17 @@ PSTEGR_SRC := disnan.o   dlar1v.o  dlarrb2.o  dlarrc.o   dlarrd.o    \
 PSTEGR_DIR := pdsyevr/pstegr
 PSTEGR := $(addprefix $(PSTEGR_DIR)/,$(PSTEGR_SRC))
 
-all : lapeigs
+all : lapeigs graph_eigs
 
 .PHONY : clean test
 
 lapeigs.o :  scalapack_symmetric_eigen.hpp scalapack_symmetric_eigen.cc
 
 lapeigs :  lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)
+
+graph_eigs.o : graph_eigs_opts.hpp triplet_graph.hpp
+
+graph_eigs : graph_eigs.o mpiutil.o 
 
 clean:
 	rm -rf lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o $(PSTEGR)
