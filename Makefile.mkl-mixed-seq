@@ -1,0 +1,41 @@
+
+OPTFLAG = -O3
+CXX = mpic++
+FC = mpif77
+CC = mpic++
+FFLAGS += $(OPTFLAG) -funroll-all-loops 
+CXXFLAGS += -Wall -Iinclude -Wno-write-strings $(OPTFLAG)
+LDLIBS += -L$SCALAPACK_LIB -L$BLACS_LIB -L$MKL_LIB \
+   -lscalapack -lblacsF77init_MPI-LINUX-0 -lblacs_MPI-LINUX-0 \
+   -Wl,-rpath,/projects/global/x86_64/compilers/intel/intel-11.1-cproc-064/mkl/lib/em64t \
+   -Wl,-rpath,/projects/global/x86_64/compilers/intel/intel-11.1-cproc-064/lib/intel64 \
+   -L/projects/global/x86_64/compilers/intel/intel-11.1-cproc-064/mkl/lib/em64t \
+   -L/projects/global/x86_64/compilers/intel/intel-11.1-cproc-064/lib/intel64 \
+   -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lm
+#  -llapack -lblas -latlas
+
+PSTEGR_SRC := disnan.o   dlar1v.o  dlarrb2.o  dlarrc.o   dlarrd.o    \
+              dlarre2.o  dlarrf.o  dlarrv2.o  dstegr2a.o  dstegr2.o    \
+              dlar1va.o  dlarra.o  dlarrb.o   dlarrd2.o  dlarre2a.o    \
+              dlarrf2.o  dlarrk.o  dlarrv.o   dstegr2b.o  
+             
+PSTEGR_DIR := pdsyevr/pstegr
+PSTEGR := $(addprefix $(PSTEGR_DIR)/,$(PSTEGR_SRC))
+
+all : lapeigs graph_eigs
+
+.PHONY : clean test
+
+lapeigs.o :  scalapack_symmetric_eigen.hpp scalapack_symmetric_eigen.cc
+
+lapeigs :  lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)
+
+graph_eigs.o : graph_eigs_opts.hpp triplet_graph.hpp scalapack_symmetric_eigen.hpp
+
+graph_eigs : graph_eigs.o mpiutil.o pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)
+
+clean:
+	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)
+
+test: lapeigs
+	./lapeigs test/tapir.smat test.evals N
