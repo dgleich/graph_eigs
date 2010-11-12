@@ -323,6 +323,37 @@ void blacs_init(void) {
     Cblacs_pinfo( &iam, &nprocs ) ;
 }
 
+/** This function tries to write to a file, but then hits stdout otherwise.
+ * 
+ * if matrix is false, then n is ignored.
+ */
+void write_data_safely(const char *type, const char* vname, unsigned int indent, 
+        const char *filename, double* a, size_t m, size_t n, bool matrix) 
+{
+    while (indent > 0) {
+        printf(" ");
+        indent -= 1;
+    }
+    printf("  Writing %s to %s.\n", type, filename);
+    if (matrix) {
+        if (write_matrix(filename, a, m, n) == false) {
+            printf("Error: writing %s to stdout\n", type);
+            for (size_t i=0; i<m; ++i) {
+                for (size_t j=0; j<n; ++j) {
+                    printf("%s(%Zu,%Zu) = %.18e;\n", vname, i+1, j+1, a[i + j*m]);
+                }
+            }    
+        }
+    } else {
+        if (write_vector(filename, a, (size_t)m) == false) {
+            printf("Error: writing %s to stdout\n", type);
+            for (size_t i=0; i<m; ++i) {
+                printf("%s(%Zu) = %.18e;\n", vname, i+1, a[i]);
+            }    
+        }
+    }
+}
+
 
 int main_blacs(int argc, char **argv, int nprow, int npcol) 
 {
@@ -450,15 +481,8 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         if (root) { tlist.report_event(4); }
         
         if (opts.tridiag && myrow==0 && mycol==0)  {
-            printf("  Writing tridiagonal factors to %s.\n",
-                opts.tridiag_filename.c_str());
-            if (write_matrix(opts.tridiag_filename.c_str(), P.T, n, 2) == false) {
-                printf("Writing failed... outputing to stdout\n");
-                for (int i=0; i<n; ++i) {
-                    printf("T(%i,1) = %.18e;\n", i+1, P.T[i]);
-                    printf("T(%i,2) = %.18e;\n", i+1, P.T[i+n]);
-                }   
-            }
+            write_data_safely("tridiagonal factors", "T", 2,
+                opts.tridiag_filename.c_str(), P.T, n, 2, true);
         }
         
         if (opts.eigenvectors == false) {
@@ -473,24 +497,26 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         if (root) { tlist.report_event(4); }
         
         if (opts.eigenvalues && myrow==0 && mycol==0)  {
-            printf("  Writing eigenvalues to %s.\n",
-                opts.values_filename.c_str());
-            if (write_vector(opts.values_filename.c_str(), P.values, (size_t)n) == false) {
-                printf("Writing eigenvalues to stdout\n");
-                for (int i=0; i<n; ++i) {
-                    printf("W(%i) = %.18e;\n", i+1, P.values[i]);
-                }    
-            }
+            write_data_safely("eigenvalues", "W", 2,
+                opts.values_filename.c_str(), P.values, n, 1, false);
         }
         
         if (opts.eigenvectors) {
             if (opts.residuals) {
                 std::vector<double> resids;
                 P.residuals(resids);
+                if (root) {
+                    write_data_safely("residuals", "r", 2,
+                        opts.residuals_filename.c_str(), &resids[0], n, 1, false);
+                }
             }
             if (opts.iparscores) {
                 std::vector<double> ipars;
                 P.Z.inverse_participation_ratios(ipars, true);  
+                if (root) {
+                    write_data_safely("iparscores", "p", 2,
+                        opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
+                }
             }
         }
         

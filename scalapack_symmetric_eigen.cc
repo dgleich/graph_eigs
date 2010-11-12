@@ -584,7 +584,7 @@ struct scalapack_symmetric_eigen {
      * This will only store the vector of residuals on the 
      * first row of the processor grid.
      */
-    void residuals(std::vector<double> residnorms) {
+    void residuals(std::vector<double>& residnorms) {
         double done = 1.;
         int ione=1;
         // repurpose lwork
