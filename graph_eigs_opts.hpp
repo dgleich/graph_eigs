@@ -286,11 +286,6 @@ bool parse_command_line_arguments(int argc, char **argv) {
     int opt, longindex;
     opt = getopt_long(argc, argv, opt_string, long_options, &longindex);
     while (opt != -1) {
-        if ('a' <= opt && opt <= 'z') {
-            printf("opt=%c optarg=%s\n", opt, optarg);
-        } else if (opt == 0) {
-            printf("opt=%s optarg=%s\n", long_options[longindex].name, optarg);
-        }
         switch (opt) {
             case 'v': opts.verbose = true; break;
             case 'h': usage(); return false; break;
