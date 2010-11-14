@@ -41,7 +41,8 @@ extern void pdsyevr_tri_( char* jobc, char *jobz, char *range, char *uplo, int *
                      double *vl, double *vu, int *il, int *iu, int *m, int *nz,
                      double *w, double *z, int *iz, int *jz, int *descz, 
                      double *work, int *lwork, int *iwork, int *liwork,
-                     int *jstate, int *info );                     
+                     int *jstate, int *info );  
+                     
 #ifdef __cplusplus
 };
 #endif
@@ -104,6 +105,23 @@ struct scalapack_distributed_matrix {
         pdlaprnt_(&m, &n, A, &ione, &ione, desc, 
             &izero, &izero, cname, &isix, &work[0], clen);
     }
+    
+    void write(std::string filename, int pi, int pj) {
+        int izero = 0, ione = 1;
+        std::vector<double> work(mb);
+        const char *fnstr = filename.c_str();
+        int fnlen = filename.size();
+        pdlawrite_(fnstr, &m, &n, A, &ione, &ione, desc,
+            &izero, &izero, &work[0], fnlen);
+    }
+    
+    /** All processors set all of their entries to a constant. */
+    void set_to_constant(double a) {
+        off_t nel = (off_t)ap*(off_t)aq;
+        for (off_t i=0; i<nel; ++i) {
+            A[i] = a;
+        }
+    }
 
     void local2global(int li, int lj, int& gi, int& gj) {
         int izero=0;
@@ -111,6 +129,50 @@ struct scalapack_distributed_matrix {
         lj+=1;
         gi = indxl2g_(&li, &mb, &myrow, &izero, &nprow) - 1;
         gj = indxl2g_(&lj, &nb, &mycol, &izero, &npcol) - 1;
+    }
+    
+    /**
+     * @param gi the global row index
+     * @param gj the global column index
+     * @param [output] li the local row index
+     * @param [output] lj the local column index
+     * @return true if the element is local, or false otherwise.
+     */
+    bool global2local(int gi, int gj, int &li, int &lj) {
+        int iarow, iacol;
+        gi += 1;// adjust to fortran indices
+        gj += 1; // adjust to fortran indices
+        
+        infog2l_(&gi, &gj, desc, &nprow, &npcol, &myrow, &mycol, 
+            &li, &lj, &iarow, &iacol);
+        li -= 1;
+        lj -= 1;
+        if (iarow == myrow && iacol == mycol) {
+            return true;
+        } else {
+            return false;
+        }        
+    }
+    
+    /** Set A[gi,gj] = a.  
+     * This command will only take effect on the processor that owns
+     * gi,gj.
+     */
+    void set(int gi, int gj, double a) {
+        gi += 1;// adjust to fortran indices
+        gj += 1; // adjust to fortran indices
+        pdelset_(A, &gi, &gj, desc, &a);
+    }
+    
+    /** Set A[gi,gj] = A[gi,gj] + a
+     * This command will only take effect on the processor 
+     * that owns gi, gj.  It does not involve any communication.
+     */
+    void incr(int gi, int gj, double a) {
+        int li, lj;
+        if (global2local(gi, gj, li, lj)) {
+            A[li+lj*ap] += a;
+        }
     }
     
     

@@ -17,7 +17,7 @@
  * 
  * Todo
  * ----
- * TODO fix adjacency/laplacian/nlaplacian to handle repeated edges
+ * TODO add large residual warning
  * TODO add report with output:
  *   - graph name
  *   - number of vertices
@@ -55,6 +55,7 @@
  *      - maximum
  *      (other useful info 
  * 
+ * The entire report shouldn't be too large on disk, and should
  * The entire report shouldn't be too large on disk, and should
  * be in a human and computer readerable format (json, yaml)
  */
@@ -132,6 +133,7 @@ struct wall_time_list {
     void end_event() {
         assert(events.size() > 0);
         events.back().second = MPI_Wtime() - t0;
+        ttime += events.back().second;
     }
     
     void report_event( unsigned int indent = 0 ) {
@@ -235,84 +237,86 @@ bool write_matrix(const char* filename, double *a, size_t m, size_t n) {
 /**
  * The memory in A must be zeroed
  */
-void assign_graph_adjacency(int* desca, double* A, triplet_data& g)
+void assign_graph_adjacency(scalapack_distributed_matrix& A, triplet_data& g)
 {
-    std::vector<int> degs(g.nrows);
+    A.set_to_constant(0.);
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        double a = 1.;
-        pdelset_(A, &i, &j, desca, &a);
+        A.incr(g.r[nzi], g.c[nzi], 1.);
     }
 }
 
 /**
  * The memory in A must be zeroed
  */
-void assign_graph_laplacian(int* desca, double* A, triplet_data& g)
+void assign_graph_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
 {
-    std::vector<int> degs(g.nrows);
+    std::vector<int> degs(g.nrows, 0);
     
-    // here, we use the function pdelset_
-    // which only performs an assignment on the correct node
-    // so we don't have to worry about the block-cyclic organization
+    A.set_to_constant(0.);
+    
+    // the diagonal entries of the laplacian cancel out, so don't count them.
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        double a = -1.;
+        int i = g.r[nzi];
+        int j = g.c[nzi];
         if (i != j) {
             degs[g.r[nzi]] += 1;
-            pdelset_(A, &i, &j, desca, &a);
+            A.incr(i,j,-1.);
         }
     }
     
-    for (int i=1; i<=g.nrows; ++i) {
-        double a = degs[i-1];
-        pdelset_(A, &i, &i, desca, &a);
+    for (int i=0; i<g.nrows; ++i) {
+        A.set(i,i,(double)degs[i]);
     }
-
 }
 
-void assign_graph_normalized_laplacian(int* desca, double* A, triplet_data& g)
+void assign_graph_normalized_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
 {
-    std::vector<int> degs(g.nrows);
-    std::vector<int> diag(g.nrows,0.);
-    
-    // here, we use the function pdelset_
-    // which only performs an assignment on the correct node
-    // so we don't have to worry about the block-cyclic organization
+    std::vector<int> degs(g.nrows,0.);
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
         degs[g.r[nzi]] += 1;
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        if (i == j) {
-            diag[i-1] += 1;
+    }
+    
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        int i = g.r[nzi];
+        int j = g.c[nzi];
+        assert(degs[i] > 0);
+        assert(degs[j] > 0);
+        double a = -1./(sqrt((double)degs[i])*sqrt((double)degs[j]));
+        
+        A.incr(g.r[nzi],g.c[nzi],a);
+    }
+    for (int i=0; i<g.nrows; i++) {
+        A.incr(i,i,1.0);
+    }
+}
+
+void assign_graph_modularity(scalapack_distributed_matrix& A, triplet_data& g)
+{
+    std::vector<int> degs(g.nrows,0.);
+    
+    double vol = 0;
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        degs[g.r[nzi]] += 1;
+        vol += 1.;
+    }
+    
+    double ivol = 1./vol;
+    
+    for (int li = 0; li<A.ap; ++li) {
+        for (int lj = 0; lj<A.aq; ++lj) {
+            int gi, gj;
+            A.local2global(li,lj,gi,gj);
+            A.A[li+lj*A.ap] = -1.0*ivol*(double)degs[gi]*(double)degs[gj];
         }
     }
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        double a = -1.;
-        if (degs[i-1] > 0 && degs[j-1] > 0) {
-            a = -1./(sqrt((double)degs[i-1])*sqrt((double)degs[j-1]));
-        } else {
-            // we'll have to figure out how to handle this case later
-            assert(false);
-        }
-        if (i != j) {
-            pdelset_(A, &i, &j, desca, &a);
-        } 
+        A.incr(g.r[nzi], g.c[nzi], 1.);
     }
     
-    for (int i=1; i<=g.nrows; ++i) {
-        double a = 1.0 - (double)diag[i-1]/(double)degs[i-1];
-        pdelset_(A, &i, &i, desca, &a);
-    }
-
 }
 
 /** Initialize blacs
@@ -365,6 +369,10 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     Cblacs_get(-1,0,&ictxt);
     Cblacs_gridinit(&ictxt, "R", npcol, npcol);    
     Cblacs_gridinfo(ictxt, &nprow, &npcol, &myrow, &mycol );
+    
+    if (myrow == -1) {
+        return (0);
+    }
     
     bool root = (myrow == 0 && mycol == 0);
     
@@ -422,28 +430,29 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         case graph_eigs_options::adjacency_matrix:
             //assign_graph_laplacian(A.desc, A.A, g);
             mpi_world_printf("Constructing the adjacency matrix.\n");
-            assign_graph_adjacency(A.desc, A.A, g);
+            assign_graph_adjacency(A, g);
             break;
             
         case graph_eigs_options::laplacian_matrix:
             mpi_world_printf("Constructing the Laplacian matrix.\n");
-            assign_graph_laplacian(A.desc, A.A, g);
+            assign_graph_laplacian(A, g);
             break;
             
         case graph_eigs_options::normalized_laplacian_matrix:
             mpi_world_printf("Constructing the normalized Laplacian matrix.\n");
-            assign_graph_normalized_laplacian(A.desc, A.A, g);
+            assign_graph_normalized_laplacian(A, g);
             break;
             
         case graph_eigs_options::modularity_matrix:
             mpi_world_printf("Constructing the modularity matrix.\n");
-            assert(false);
+            assign_graph_modularity(A, g);
             break;
     }
     tlist.end_event();
     if (root) {
         tlist.report_event(2);
     }
+    if (root) { printf("\n"); }
     
     scalapack_symmetric_eigen P(A);
         
@@ -504,7 +513,11 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         if (opts.eigenvectors) {
             if (opts.residuals) {
                 std::vector<double> resids;
+                tlist.start_event("residuals");
                 P.residuals(resids);
+                tlist.end_event();
+                if (root) { tlist.report_event(6); }
+                
                 if (root) {
                     write_data_safely("residuals", "r", 2,
                         opts.residuals_filename.c_str(), &resids[0], n, 1, false);
@@ -512,14 +525,33 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
             }
             if (opts.iparscores) {
                 std::vector<double> ipars;
+                tlist.start_event("iparscores");
                 P.Z.inverse_participation_ratios(ipars, true);  
+                tlist.end_event();
+                if (root) { tlist.report_event(6); }
+                
                 if (root) {
                     write_data_safely("iparscores", "p", 2,
                         opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
                 }
             }
+            if (opts.vectors) {
+                // write the matrix on the root processor
+                if (root) {
+                    printf("    Writing eigenvectors to %s.\n", 
+                        opts.vectors_filename.c_str());
+                }
+                P.Z.write(opts.vectors_filename, 0, 0);
+            }
         }
         
+    }
+    
+    if (root) {
+        printf("\n");
+        printf("Done.\n");
+        printf("  total_compute time: %.1f sec.\n", tlist.ttime);
+        printf("\n");
     }
     
     return (0);
@@ -571,6 +603,8 @@ int main(int argc, char **argv) {
         return (-1);
     }
     #endif /* BLACS_ALL */
+    
+    
     
 
     // initialize the blacs grid

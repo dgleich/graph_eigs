@@ -137,7 +137,7 @@ def setup_command_line_options():
     g.add_option('--residuals-file',metavar="FILE",
         help="Output eigenvalue/vector residuals to a FILE instead "
         "of STDOUT")
-    g.add_option('--localization',default=None,metavar="FILE",
+    g.add_option('-p','--iparscores',default=None,metavar="FILE",
         help="Compute the eigenvectors and output participation "
         "ratios for each eigenvector to indicate localization.")
     g.add_option('--vectors',default=None,metavar="FILE",
@@ -147,6 +147,16 @@ def setup_command_line_options():
         "(Not recommended if the eigenvectors are compute.)")
     #g.add_option('--fiedler',default=None,metavar="FILE",
     #    help="Output the Fiedler vector")
+    parser.add_option_group(g)
+    
+    g = optparse.OptionGroup(parser,"Verification options","""
+    The following options allow us to verify the output of another
+    program to make sure we agree on eigenvalues.
+    """)
+    g.add_option('--check-eigs',default=None,metavar="FILE",
+        help="Filename of eigenvalue file to check.")
+    g.add_option('--check-ipar',default=None,metavar="FILE",
+        help="Filename of iparscores file to check.")
     parser.add_option_group(g)
   
     return parser
@@ -161,13 +171,18 @@ def set_option_defaults(graphfilename, opts):
     opts.graphfilename = graphfilename
     
     # compute eigenvectors if any of these are set
-    if opts.localization is not None or opts.vectors is not None:
+    if opts.iparscores is not None or opts.vectors is not None:
         opts.evecs = True
         
     if opts.output is None:
         opts.output = graphfilename + "." + opts.type + ".eigs"
     
-        
+def in_check_mode(opts):
+    if opts.check_eigs is not None:
+        return True
+    if opts.check_ipar is not None:
+        return True
+    return False
     
 def print_options(options):
     all_opts = options.__dict__
@@ -194,6 +209,70 @@ def participation_ratios(Q):
         evec *= evec
         p[i] = evec.sum()
     return p
+        
+    
+def compare_eigs(v1,v2):
+    assert(v1.size == v2.size)
+    v1 = v1.copy()
+    v2 = v2.copy()
+    v1.sort()
+    v2.sort()
+    ndiff = 0
+    for i,ev1 in enumerate(v1):
+        if abs(ev1-v2[i])/(1+abs(ev1)) > 1e-16*len(v1):
+            print >>sys.stderr, "eigs %.18e and %.18e are too different"%(
+                ev1,v2[i])
+            ndiff += 1
+        
+    
+    if ndiff > 0:
+        print >>sys.stderr, "%i eigenvalues differ"%(ndiff)
+        return False
+    else:
+        return True
+    
+    
+""" Compare two different sets of computed eigenvalues. """    
+def check_eigs(opts,v):
+    
+    if opts.check_eigs is not None:
+        myeigs = v
+        fileeigs = numpy.loadtxt(opts.check_eigs)
+        compare_eigs(myeigs, fileeigs)
+    
+    
+""" The current comparison algorithm is very simple and not yet robust.
+
+It checks that the ipar scores are close when v indicates a distinct
+eigenvalue.  This implies that both sets are sorted equivalently,
+which we don't yet check.
+"""
+    
+def compare_ipars(ipar1,ipar2,v):
+    assert(ipar1.size == ipar2.size == v.size)
+    
+    if (abs(ipar1[0] - ipar2[0])/abs(ipar1[0])) > 1e-10:
+        print >>sys.stderr, "ipar[0] %.18e and %.18e are too different"%(
+                ipar1[0],ipar2[0])
+                
+    if (abs(ipar1[-1] - ipar2[-1])/abs(ipar1[-1])) > 1e-10:
+        print >>sys.stderr, "ipar[0] %.18e and %.18e are too different"%(
+                ipar1[-1],ipar2[-1])
+                
+     
+    return True
+    
+    
+""" Compare properties of two sets of eigenvectors. """
+def check_evecs(opts,Q,v):
+    
+    check_eigs(opts,v)
+
+    if opts.check_ipar is not None:
+        myipars = participation_ratios(Q)
+        fileipars = numpy.loadtxt(opts.check_ipar)
+        compare_ipars(myipars, fileipars, v);
+    
 
 def main():
     parser = setup_command_line_options()
@@ -205,6 +284,12 @@ def main():
     graphfilename = args[0]
     check_options(graphfilename,opts)
     set_option_defaults(graphfilename,opts)
+    
+    check_mode = in_check_mode(opts)
+    if check_mode:
+        opts.verbose = False
+        if opts.check_ipar is not None:
+            opts.evecs = True
     
     if opts.verbose: print_options(opts)
     
@@ -233,11 +318,17 @@ def main():
     if opts.evecs is False:
         vprint("Computing eigenvalues")
         v = scipy_wrap.symmetric_evals(M)
+        if check_mode: 
+            check_eigs(opts, v)
+            return
         vprint("Writing eigenvalues : %s"%(opts.output))
         numpy.savetxt(opts.output,v)
     else:
         vprint("Computing eigenvalues and eigenvectors")
         Q,v = scipy_wrap.symmetric_evecs(M)
+        if check_mode: 
+            check_evecs(opts, Q, v)
+            return
         if opts.evals is not False:
             vprint("Writing eigenvalues : %s"%(opts.output))
             numpy.savetxt(opts.output,v)
@@ -256,9 +347,9 @@ def main():
                     
                     print >>sys.stdout, "%.18e  %s"%(rval,flag)
                     
-        if opts.localization is not None:
+        if opts.iparscores is not None:
             par = participation_ratios(Q)
-            numpy.savetxt(opts.localization,par)
+            numpy.savetxt(opts.iparscores,par)
             
         if opts.vectors is not None:
             numpy.savetxt(opts.vectors,Q)

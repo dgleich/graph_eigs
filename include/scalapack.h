@@ -4,7 +4,6 @@ extern "C" {
 #endif    
 
 
-extern void   pdlawrite_( char **filenam, int *m, int *n, double *A, int *ia, int *ja, int *descA, int *irwrit, int *icwrit, double *work);
 extern void   pdelset_( double *A, int *ia, int *ja, int *desca, double *alpha);
 extern double pdlamch_( int *ictxt, char *cmach);
 extern int    indxg2p_( int *indxglob, int *nb, int *iproc, int *isrcproc, int *nprocs);
@@ -27,6 +26,9 @@ extern void   pdgemm_( char *TRANSA, char *TRANSB, int * M, int * N, int * K, do
                                 double * BETA, double * C, int * IC, int * JC, int * DESCC );
 extern int    indxg2p_( int *indxglob, int *nb, int *iproc, int *isrcproc, int *nprocs);
 
+extern void   infog2l_( int *grind, int *gcind, int *desc, int *nprow, int *npcol,
+                        int *myrow, int *mycol, int *lrind, int *lcind, int *rsrc, int *csrc);
+
 extern void pdsymm_( char* side, char* uplo, int *M, int *N, double *ALPHA, 
     double *A, int *IA, int *JA, int *DESCA,
     double *B, int *IB, int *JB, int *DESCB, 
@@ -44,22 +46,16 @@ extern void pdtreecomb_(int *ictxt, char *scope, int *n, double *mine, int *rdes
 extern void pdlaprnt_(int *m, int *n, double *a, int *ia, int *ja, int *desca,
     int *iprnt, int *jprnt, char *cname,  int *nout, double *work, int clen);
     
+extern void pdlawrite_( const char* filenam, int *m, int *n, double *a,
+                        int *ia, int *ja, int *desca, 
+                        int *piwrite, int *pjwrite, double *work,
+                        int filenamelen );    
+    
 extern void pdlared2d_(int *m, int *ia, int *ja, int *desc, double *byrow, double *byall, double *work, int *lwork);
 extern void pdlared1d_(int *n, int *ia, int *ja, int *desc, double *bycol, double *byall, double *work, int *lwork);
 
 
 int sl_gridreshape_(int *ctxt, int *pstart, int *row_major_in, int *row_major_out, int *P, int *Q);
-
-#ifdef F77_WITH_NO_UNDERSCORE
-#define   numroc_      numroc
-#define   descinit_    descinit
-#define   pdlamch_     pdlamch
-#define   pdlange_     pdlange
-#define   pdlacpy_     pdlacpy
-#define   pdgesv_      pdgesv
-#define   pdgemm_      pdgemm
-#define   indxg2p_     indxg2p
-#endif
 
 #ifdef __cplusplus
 };
