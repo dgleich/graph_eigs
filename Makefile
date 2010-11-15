@@ -37,11 +37,12 @@ clean_test:
 	
 test_tapir:	
 	./graph_eigs test/tapir.smat -a -r -p > /dev/null
-	python graph_eigs.py test/tapir.smat -a --check-eigs test/tapir.smat.adjacency.eigs --check-ipar test/tapir.smat.adjacency.ipar
+	python graph_eigs.py test/tapir.smat -a --check-eigs test/tapir.smat.adjacency.eigs --check-ipar test/tapir.smat.adjacency.ipar --check-resids test/tapir.smat.adjacency.resids
 	./graph_eigs test/tapir.smat -l -r -p > /dev/null
 	python graph_eigs.py test/tapir.smat -l --check-eigs test/tapir.smat.laplacian.eigs --check-ipar test/tapir.smat.laplacian.ipar
 	./graph_eigs test/tapir.smat -n -r -p > /dev/null
 	python graph_eigs.py test/tapir.smat -n --check-eigs test/tapir.smat.normalized.eigs --check-ipar test/tapir.smat.normalized.ipar
+	python graph_eigs.py test/tapir.smat --type=markov --check-eigs test/tapir.smat.normalized-markov.eigs --check-ipar test/tapir.smat.normalized-markov.ipar
 	./graph_eigs test/tapir.smat -m -r -p > /dev/null
 	python graph_eigs.py test/tapir.smat -m --check-eigs test/tapir.smat.modularity.eigs --check-ipar test/tapir.smat.modularity.ipar
 	
@@ -52,6 +53,7 @@ test_polblogs:
 	python graph_eigs.py test/polblogs-sym-cc.smat -l --check-eigs test/polblogs-sym-cc.smat.laplacian.eigs --check-ipar test/polblogs-sym-cc.smat.laplacian.ipar
 	./graph_eigs test/polblogs-sym-cc.smat -n -r -p > /dev/null
 	python graph_eigs.py test/polblogs-sym-cc.smat -n --check-eigs test/polblogs-sym-cc.smat.normalized.eigs --check-ipar test/polblogs-sym-cc.smat.normalized.ipar
+	python graph_eigs.py test/polblogs-sym-cc.smat --type=markov --check-eigs test/polblogs-sym-cc.smat.normalized-markov.eigs --check-ipar test/polblogs-sym-cc.smat.normalized-markov.ipar
 	./graph_eigs test/polblogs-sym-cc.smat -m -r -p > /dev/null
 	python graph_eigs.py test/polblogs-sym-cc.smat -m --check-eigs test/polblogs-sym-cc.smat.modularity.eigs --check-ipar test/polblogs-sym-cc.smat.modularity.ipar
 

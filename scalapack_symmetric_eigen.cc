@@ -272,10 +272,7 @@ struct scalapack_distributed_matrix {
             }
             Cdgsum2d(ictxt, "Columnwise", " ", 
               1, aq, &colnorms[0], 1, 0, mycol);
-        
-            for (int j=0; j<aq; ++j) {
-                colnorms[j] = sqrt(colnorms[j]);
-            }
+
         }
 
         // TODO implement broadcast to send the results to all processors
@@ -298,7 +295,7 @@ struct scalapack_distributed_matrix {
             // rescale the normalized scores
             if (normalized == false) {
                 for (int j=0; j<aq; ++j) {
-                    localpar[j] /= colnorms[j];
+                    localpar[j] /= (colnorms[j]*colnorms[j]);
                 }
             }
             //printf("postcomb\n");
@@ -315,6 +312,50 @@ struct scalapack_distributed_matrix {
                 for (int j=0; j<m; ++j) {
                     //printf("[%3i x %3i] ipars[%i] = %g\n", myrow, mycol, j, ipars[j]);
                 }
+            }
+        }
+    }
+    
+    /** Scale the column of a distributed matrix.
+     * For each column A(:,i), this function sets
+     *   A(:,i) <- alpha*A(:,i)*s(i)
+     * where s(i) is the ith entry in the column scaling
+     * vector.  This vector must be available on all
+     * processors currently.
+     * 
+     * @param s the vector of scaling factors.  s must be an array
+     * of length n (the number of columns) and must be available
+     * on all processors.
+     * @param alpha an additional scaling factor.
+     */
+    void scale_columns(double *s, double alpha) {
+        int gi, gj;
+        for (int i=0; i<ap; ++i) {
+            for (int j=0; j<aq; ++j) {
+                local2global(i, j, gi, gj);
+                A[i+j*ap] *= alpha*s[gj];
+            }
+        }
+    }
+    
+    /** Scale the rows of a distributed matrix.
+     * For each row A(i,:), this function sets
+     *   A(i,:) <- alpha*A(i,:)*s(i)
+     * where s(i) is the ith entry in the row scaling
+     * vector.  This vector must be available on all
+     * processors currently.
+     * 
+     * @param s the vector of scaling factors.  s must be an array
+     * of length m (the number of rows) and must be available
+     * on all processors.
+     * @param alpha an additional scaling factor.
+     */
+    void scale_rows(double *s, double alpha) {
+        int gi, gj;
+        for (int i=0; i<ap; ++i) {
+            for (int j=0; j<aq; ++j) {
+                local2global(i, j, gi, gj);
+                A[i+j*ap] *= alpha*s[gi];
             }
         }
     }
@@ -627,17 +668,7 @@ struct scalapack_symmetric_eigen {
             assert(nvecs == n);
         }
     }
-    
-    void _scale_eigenvectors_in_work() {
-        int gi, gj;
-        for (int i=0; i<Z.ap; ++i) {
-            for (int j=0; j<Z.aq; ++j) {
-                Z.local2global(i, j, gi, gj);
-                work[i+j*A.ap] *= -1.0*values[gj];
-            }
-        }
-    }
-    
+ 
     /** Compute the residuals for the eigenvectors 
      * 
      * This computes
@@ -645,6 +676,10 @@ struct scalapack_symmetric_eigen {
      * 
      * This will only store the vector of residuals on the 
      * first row of the processor grid.
+     * 
+     * This function does not require the matrix to be 
+     * reloaded if both halves (upper and lower) were initially
+     * specified.  
      */
     void residuals(std::vector<double>& residnorms) {
         double done = 1.;
@@ -658,7 +693,7 @@ struct scalapack_symmetric_eigen {
         
         // compute -V*L
         memcpy(work, Z.A, sizeof(double)*Z.ap*Z.aq);
-        _scale_eigenvectors_in_work();
+        resids.scale_columns(values, -1.0);
         
         // compute A*V-V*L for all the eigenvectors
         pdsymm_("L", "L", 
@@ -668,13 +703,45 @@ struct scalapack_symmetric_eigen {
             &done,
             work, &ione, &ione, Z.desc);
             
-        // now compute norms of each column
-        //double maxresid = pdlange_("M", &n, &n, work, &ione, &ione, A.desc, &dzero);
-        // printf("Residual: %g\n", maxresid);
         
         resids.column_norms(residnorms);
+    }
+    
+    /** Compute the residuals for the eigenvectors 
+     * 
+     * This computes
+     *   residnorms(i) = ||A*v - v*l||
+     * 
+     * This will only store the vector of residuals on the 
+     * first row of the processor grid.
+     * 
+     * This function requires the matrix A to be reloaded.  
+     * It uses pdgemm instead of pdsymm.
+     */
+    void reloaded_residuals(std::vector<double>& residnorms) {
+        double done = 1.;
+        int ione=1;
+        // repurpose lwork
+        assert(lwork > A.ap*A.aq);
         
-        //resids.print(0,0,"R",1);
+        scalapack_distributed_matrix resids;
+        resids.init(ictxt, n, n, A.nb, A.nb);
+        resids.A = work;
+        
+        // compute -V*L
+        memcpy(work, Z.A, sizeof(double)*Z.ap*Z.aq);
+        resids.scale_columns(values, -1.0);
+        
+        // compute A*V-V*L for all the eigenvectors
+        pdgemm_("N", "N", 
+            &n, &n, &n, &done,
+            A.A, &ione, &ione, A.desc,
+            Z.A, &ione, &ione, Z.desc,
+            &done,
+            work, &ione, &ione, Z.desc);
+            
+        
+        resids.column_norms(residnorms);
     }
     
     /** Free any memory allocated in this operation. */

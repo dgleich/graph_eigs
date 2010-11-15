@@ -14,10 +14,10 @@
  * :2010-10-07: Initial coding
  * :2010-11-10: resuming coding after finishing lapeigs in C with all
  *   desired scalapack features.
+ * :2010-11-14: Added Markov matrix
  * 
  * Todo
  * ----
- * TODO add large residual warning
  * TODO add report with output:
  *   - graph name
  *   - number of vertices
@@ -83,7 +83,7 @@
 #include "triplet_graph.hpp"
 #include "graph_eigs_opts.hpp"
 
-const int graph_eigs_version = 2;
+const int graph_eigs_version = 3;
 
 void write_header(void) {
     mpi_world_printf("\n");
@@ -247,7 +247,6 @@ void assign_graph_adjacency(scalapack_distributed_matrix& A, triplet_data& g)
 }
 
 /**
- * The memory in A must be zeroed
  */
 void assign_graph_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
 {
@@ -269,6 +268,34 @@ void assign_graph_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
     for (int i=0; i<g.nrows; ++i) {
         A.set(i,i,(double)degs[i]);
     }
+}
+
+/**
+ * This routine creates a non-symmetric matrix.  It cannot be used
+ * to construct a matrix for scalapack_symmetric_eigen.  Instead, 
+ * see how we use the normalized laplacian to construct the Markov matrix.
+ */
+void assign_graph_markov(scalapack_distributed_matrix& A, triplet_data& g)
+{
+    std::vector<int> degs(g.nrows, 0);
+    
+    A.set_to_constant(0.);
+    
+    // the diagonal entries of the laplacian cancel out, so don't count them.
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        degs[g.r[nzi]] += 1;
+    }
+    
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        int i = g.r[nzi];
+        int j = g.c[nzi];
+        assert(degs[i] > 0);
+        assert(degs[j] > 0);
+        double a = 1./((double)degs[i]);
+        
+        A.incr(g.r[nzi],g.c[nzi],a);
+    }
+  
 }
 
 void assign_graph_normalized_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
@@ -358,6 +385,115 @@ void write_data_safely(const char *type, const char* vname, unsigned int indent,
     }
 }
 
+/** Output any residuals that are larger than a set scale. 
+ * This function is useful to indicate any problems with the computation.
+ * @param resids the residuals associated with each eigenvector.
+ * @param scale a 
+ * @param tol the large residual tolerance
+ */
+void find_large_residuals(std::vector<double>& resids, double *scale, double tol)
+{
+    printf("   Checking for residuals larger than %.2e.\n", tol);
+    for (size_t i=0; i<resids.size(); ++i) {
+        double err = fabs(resids[i])/(fabs(scale[i])+1.);
+        if (err > tol) {
+            if (err > 1000*tol) {
+                printf(" **** Residual %Zu is EXTREMELY large: %.18e\n", 
+                    i, err);
+            } else {
+                printf("      Residual %Zu is large: %.18e\n", i, err);
+            }
+        }
+    }
+}
+
+/** Compute data on the Markov matrix from the normalized Laplacian.
+ * For an undirected graph, the eigenvalues and vectors of the 
+ * Markov chain transition matrix can be computed via the eigenvalues
+ * and eigenvectors of the normalized Laplacian matrix.  This function
+ * transforms the eigenvectors and values, and also outputs the
+ * new information.
+ *
+ * *IT DESTROYS INFORMATION IN A and P*, the matrix and problem.
+ * 
+ * @param g the graph
+ * @param A the current matrix
+ * @param P the current eigensystem
+ * */
+void output_markov_data(triplet_data& g,
+    scalapack_distributed_matrix& A, 
+    scalapack_symmetric_eigen& P)
+{
+    int myrow, mycol, nprow, npcol;
+    Cblacs_gridinfo(A.ictxt, &nprow, &npcol, &myrow, &mycol );
+    bool root = myrow == 0 && mycol == 0;
+    
+    assert(opts.matrix == opts.normalized_laplacian_matrix);
+    
+    // compute graph degrees
+    assert(g.nrows == P.n);
+    std::vector<double> degs(g.nrows, 0.);
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        degs[g.r[nzi]] += 1.;
+    }
+    // invert graph degres
+    for (int i=0; i<g.nrows; ++i) {
+        degs[i] = sqrt(1.0/degs[i]);
+    }
+    
+    // scale the eigenvectors
+    P.Z.scale_rows(&degs[0], 1.0);
+    
+    // change the eigenvalues
+    for (int i=0; i<P.n; ++i) {
+        P.values[i] = 1.0 - P.values[i];
+    }
+    
+    if (opts.eigenvalues && root)  {
+        write_data_safely("Markov eigenvalues", "mw", 2,
+            opts.markov_values_filename.c_str(), P.values, P.n, 1, false);
+    }
+        
+    if (opts.eigenvectors) {
+        if (opts.residuals) {
+            std::vector<double> resids;
+            tlist.start_event("markov_residuals");
+            assign_graph_markov(P.A, g);
+            P.reloaded_residuals(resids);
+            tlist.end_event();
+            if (root) { tlist.report_event(6); }
+            
+            if (root) {
+                write_data_safely("Markov residuals", "mr", 2,
+                    opts.markov_residuals_filename.c_str(), &resids[0], P.n, 1, false);
+            }
+            
+            if (root) {
+                find_large_residuals(resids, P.values, 2.e-16*P.n);
+            }
+        }
+        if (opts.iparscores) {
+            std::vector<double> ipars;
+            tlist.start_event("markov_iparscores");
+            P.Z.inverse_participation_ratios(ipars, false);  
+            tlist.end_event();
+            if (root) { tlist.report_event(6); }
+            
+            if (root) {
+                write_data_safely("Markov iparscores", "mp", 2,
+                    opts.markov_ipar_filename.c_str(), &ipars[0], P.n, 1, false);
+            }
+        }
+        if (opts.vectors) {
+            // write the matrix on the root processor
+            if (root) {
+                printf("    Writing eigenvectors to %s.\n", 
+                    opts.markov_vectors_filename.c_str());
+            }
+            P.Z.write(opts.markov_vectors_filename, 0, 0);
+        }
+    }
+}    
 
 int main_blacs(int argc, char **argv, int nprow, int npcol) 
 {
@@ -505,7 +641,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         tlist.end_event();
         if (root) { tlist.report_event(4); }
         
-        if (opts.eigenvalues && myrow==0 && mycol==0)  {
+        if (opts.eigenvalues && root)  {
             write_data_safely("eigenvalues", "W", 2,
                 opts.values_filename.c_str(), P.values, n, 1, false);
         }
@@ -521,6 +657,10 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
                 if (root) {
                     write_data_safely("residuals", "r", 2,
                         opts.residuals_filename.c_str(), &resids[0], n, 1, false);
+                }
+                
+                if (root) {
+                    find_large_residuals(resids, P.values, 2.2e-16*P.n);
                 }
             }
             if (opts.iparscores) {
@@ -545,6 +685,10 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
             }
         }
         
+        // handle Markov matrix
+        if (opts.matrix == opts.normalized_laplacian_matrix) {
+            output_markov_data(g, A, P);
+        }
     }
     
     if (root) {

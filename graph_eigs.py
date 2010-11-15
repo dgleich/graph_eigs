@@ -26,20 +26,37 @@ import simple_graph
 import scipy_wrap
 
 
+def resid_func(resids,f):
+    """ A quick helper function to get the residual matrix to fix 
+    python's scope problems. """
+    
+    if resids is None:
+        return f
+    else:
+        return resids
+        
 matrix_types = {}
-def matrix_type(f):
+def matrix_type(evals_post, evecs_post, resids):
     """ A decorator to add a function to the global list of matrix types. 
     
     If the function name ends in '_matrix', this term is removed
     from the matrix type.
     """
-    name = f.__name__
-    if name.endswith('_matrix'):
-        matrix_types[name[:-7]] = f
-    else:
-        matrix_types[name] = f
+    def real_decorate(f):
+        name = f.__name__
+        ops = { 'matrix':f, 
+            'evals_post':evals_post, 'evecs_post':evecs_post, 
+            'resids':resid_func(resids, f) }
+        if name.endswith('_matrix'):
+            matrix_types[name[:-7]] = ops
+        else:
+            matrix_types[name] = ops
+        return f
+    return real_decorate
     
-@matrix_type    
+def identity_func(g,x): return x
+    
+@matrix_type(identity_func, identity_func, None)
 def adjacency_matrix(graph):
     n = graph.nverts()
     M = numpy.zeros((n,n),order='F')
@@ -47,7 +64,7 @@ def adjacency_matrix(graph):
         M[i,j] += 1
     return M
     
-@matrix_type    
+@matrix_type(identity_func, identity_func, None)
 def laplacian_matrix(graph):
     n = graph.nverts()
     M = numpy.zeros((n,n),order='F')
@@ -58,7 +75,7 @@ def laplacian_matrix(graph):
         M[i,i] += float(degs[i])
     return M    
     
-@matrix_type    
+@matrix_type(identity_func, identity_func, None)
 def normalized_matrix(graph):
     n = graph.nverts()
     M = numpy.zeros((n,n),order='F')
@@ -69,7 +86,7 @@ def normalized_matrix(graph):
         M[i,i] += 1.
     return M
     
-@matrix_type    
+@matrix_type(identity_func, identity_func, None)
 def modularity_matrix(graph):
     n = graph.nverts()
     degs = numpy.array([ d for d in graph.degrees() ])
@@ -78,6 +95,35 @@ def modularity_matrix(graph):
     M *= -1.
     for (i,j) in graph.edges():
         M[i,j] += 1.
+    return M    
+    
+def markov_evals(graph,v):
+    v = 1.0 - v
+    return v
+def markov_evecs(graph,Q):
+    degs = numpy.array([ d for d in graph.degrees() ])
+    degs = 1./numpy.sqrt(degs);
+    M = numpy.diag(degs);
+    Q = numpy.dot(M, Q)
+    return Q
+    
+def markov_resid_matrix(graph):
+    n = graph.nverts()
+    M = numpy.zeros((n,n),order='F')
+    degs = [ d for d in graph.degrees() ]
+    for (i,j) in graph.edges():
+        M[i,j] += 1./degs[i]
+    return M    
+    
+@matrix_type(markov_evals,markov_evecs,markov_resid_matrix)
+def markov_matrix(graph):
+    n = graph.nverts()
+    M = numpy.zeros((n,n),order='F')
+    degs = [ d for d in graph.degrees() ]
+    for (i,j) in graph.edges():
+        M[i,j] -= 1./math.sqrt(degs[i]*degs[j])
+    for i in xrange(n):
+        M[i,i] += 1.
     return M    
     
 
@@ -157,6 +203,8 @@ def setup_command_line_options():
         help="Filename of eigenvalue file to check.")
     g.add_option('--check-ipar',default=None,metavar="FILE",
         help="Filename of iparscores file to check.")
+    g.add_option('--check-resids',default=None,metavar="FILE",
+        help="Filename of resids file to check.")
     parser.add_option_group(g)
   
     return parser
@@ -190,7 +238,7 @@ def print_options(options):
     
 def eigenvalue_residuals(graph,type,Q,v):
     
-    M = matrix_types[type](graph)
+    M = matrix_types[type]['resids'](graph)
     r = numpy.zeros((Q.shape[1],))
     for i in xrange(Q.shape[1]):
         evec = Q[:,i]
@@ -206,8 +254,10 @@ def participation_ratios(Q):
         evec = Q[:,i].copy()
         # compute evec.^4
         evec *= evec
+        sum2 = evec.sum() # compute sum(evec.^2)
         evec *= evec
-        p[i] = evec.sum()
+        p[i] = evec.sum()/(sum2*sum2)
+        
     return p
         
     
@@ -239,8 +289,22 @@ def check_eigs(opts,v):
         myeigs = v
         fileeigs = numpy.loadtxt(opts.check_eigs)
         compare_eigs(myeigs, fileeigs)
+        
+def compare_resids(r1,r2,v):
+    """ This functiona ssumes that r1 and r2 are sorted the same. 
+    This is used to check relative residuals.
+    """
     
-    
+    for i,ri in enumerate(r1):
+        if abs(ri)/abs(v[i] + 1.) <  10*2.2e-16*len(r1):
+            # my residual is good, check their residual
+            if abs(r2[i])/abs(v[i]+1.) < 10*2.2e-16*len(r1):
+                # file resid is good too...
+                pass
+            else:
+                print >>sys.stderr, "resid %i is larger than expected, relerr is %.18e\n"%(
+                    i, abs(r2[i])/abs(v[i]+1.))
+                    
 """ The current comparison algorithm is very simple and not yet robust.
 
 It checks that the ipar scores are close when v indicates a distinct
@@ -264,9 +328,15 @@ def compare_ipars(ipar1,ipar2,v):
     
     
 """ Compare properties of two sets of eigenvectors. """
-def check_evecs(opts,Q,v):
+def check_evecs(g,opts,Q,v):
     
     check_eigs(opts,v)
+    
+    if opts.check_resids is not None:
+        # the only thing to check on residuals is that they aren't too large
+        myresids = eigenvalue_residuals(g,opts.type,Q,v)
+        fileresids = numpy.loadtxt(opts.check_resids)
+        compare_resids(myresids, fileresids, v)
 
     if opts.check_ipar is not None:
         myipars = participation_ratios(Q)
@@ -307,7 +377,7 @@ def main():
     vprint("Graph has %i vertices, %i edges"%(g.nverts(), g.nedges()))
     
     vprint("Constructing matrix type : %s"%(opts.type))
-    M = matrix_types[opts.type](g)
+    M = matrix_types[opts.type]['matrix'](g)
     
     # todo optimize these computations
     if opts.tridiag is not None:
@@ -318,6 +388,7 @@ def main():
     if opts.evecs is False:
         vprint("Computing eigenvalues")
         v = scipy_wrap.symmetric_evals(M)
+        v = matrix_types[opts.type]['evals_post'](g, v)
         if check_mode: 
             check_eigs(opts, v)
             return
@@ -326,8 +397,10 @@ def main():
     else:
         vprint("Computing eigenvalues and eigenvectors")
         Q,v = scipy_wrap.symmetric_evecs(M)
+        v = matrix_types[opts.type]['evals_post'](g, v)
+        Q = matrix_types[opts.type]['evecs_post'](g, Q)
         if check_mode: 
-            check_evecs(opts, Q, v)
+            check_evecs(g, opts, Q, v)
             return
         if opts.evals is not False:
             vprint("Writing eigenvalues : %s"%(opts.output))
