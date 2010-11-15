@@ -398,10 +398,11 @@ void find_large_residuals(std::vector<double>& resids, double *scale, double tol
         double err = fabs(resids[i])/(fabs(scale[i])+1.);
         if (err > tol) {
             if (err > 1000*tol) {
-                printf(" **** Residual %Zu is EXTREMELY large: %.18e\n", 
-                    i, err);
+                printf(" **** Residual %Zu is EXTREMELY large: %.18e ; eval=%.2e\n", 
+                    i, err, scale[i]);
             } else {
-                printf("      Residual %Zu is large: %.18e\n", i, err);
+                printf("      Residual %Zu is large: %.18e ; eval=%.2e\n",
+                    i, err, scale[i]);
             }
         }
     }
@@ -686,7 +687,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         }
         
         // handle Markov matrix
-        if (opts.matrix == opts.normalized_laplacian_matrix) {
+        if (opts.matrix == opts.normalized_laplacian_matrix && opts.markov) {
             output_markov_data(g, A, P);
         }
     }

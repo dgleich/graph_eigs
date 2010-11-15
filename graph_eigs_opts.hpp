@@ -325,7 +325,7 @@ struct graph_eigs_options {
     void distribute() {    
         int header[11]={verbose, tridiag, residuals, iparscores, vectors,
                 eigenvalues, eigenvectors, matrix, nb, minmemory, markov};
-        MPI_Bcast(header, 10, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(header, sizeof(header)/sizeof(int), MPI_INT, 0, MPI_COMM_WORLD);
         verbose = header[0];
         tridiag = header[1];
         residuals = header[2];
