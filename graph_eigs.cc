@@ -430,21 +430,7 @@ void output_markov_data(triplet_data& g,
     bool root = myrow == 0 && mycol == 0;
     
     assert(opts.matrix == opts.normalized_laplacian_matrix);
-    
-    // compute graph degrees
-    assert(g.nrows == P.n);
-    std::vector<double> degs(g.nrows, 0.);
-    for (int nzi=0; nzi<g.nnz; ++nzi) {
-        degs[g.r[nzi]] += 1.;
-    }
-    // invert graph degres
-    for (int i=0; i<g.nrows; ++i) {
-        degs[i] = sqrt(1.0/degs[i]);
-    }
-    
-    // scale the eigenvectors
-    P.Z.scale_rows(&degs[0], 1.0);
-    
+        
     // change the eigenvalues
     for (int i=0; i<P.n; ++i) {
         P.values[i] = 1.0 - P.values[i];
@@ -456,6 +442,21 @@ void output_markov_data(triplet_data& g,
     }
         
     if (opts.eigenvectors) {
+        // compute graph degrees
+        assert(g.nrows == P.n);
+        std::vector<double> degs(g.nrows, 0.);
+        for (int nzi=0; nzi<g.nnz; ++nzi) {
+            degs[g.r[nzi]] += 1.;
+        }
+        // invert graph degres
+        for (int i=0; i<g.nrows; ++i) {
+            assert(degs[i] > 0);
+            degs[i] = sqrt(1.0/(double)degs[i]);
+        }
+        
+        // scale the eigenvectors
+        P.Z.scale_rows(&degs[0], 1.0);
+        
         if (opts.residuals) {
             std::vector<double> resids;
             tlist.start_event("markov_residuals");
@@ -552,9 +553,9 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     
     // allocate local storage for the matrix
     if (opts.verbose) {
-        printf("[%3i x %3i] allocating %Zu bytes for A (n=%i, nb=%i, ap=%i, aq=%i)\n",
+        printf("[%3i x %3i] allocating %Zu bytes for A (n=%i, mb=%i, nb=%i, ap=%i, aq=%i)\n",
             myrow, mycol, A.bytes(),
-            A.n, A.nb, A.ap, A.aq );
+            A.n, A.mb, A.nb, A.ap, A.aq );
     }
         
     if (!A.allocate()) {
@@ -597,7 +598,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     
     if (opts.verbose) {
         printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
-            myrow, mycol, P.bytes(), P.myZ*P.Z.ap*P.Z.aq, P.lwork);
+            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork);
     }
     
     if (!P.allocate()) {

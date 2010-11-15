@@ -429,6 +429,7 @@ struct scalapack_symmetric_eigen {
         if (vectors && myZ) {
             Z.init(ictxt, n, n, A.nb, A.nb);
         }
+        _set_worksize();
     }
     
     size_t bytes() {
