@@ -18,6 +18,7 @@
  * 
  * Todo
  * ----
+ * TODO output extremal eigenvalues for checking
  * TODO add report with output:
  *   - graph name
  *   - number of vertices
@@ -302,6 +303,8 @@ void assign_graph_normalized_laplacian(scalapack_distributed_matrix& A, triplet_
 {
     std::vector<int> degs(g.nrows,0.);
     
+    A.set_to_constant(0.);
+    
     for (int nzi=0; nzi<g.nnz; ++nzi) {
         degs[g.r[nzi]] += 1;
     }
@@ -323,6 +326,8 @@ void assign_graph_normalized_laplacian(scalapack_distributed_matrix& A, triplet_
 void assign_graph_modularity(scalapack_distributed_matrix& A, triplet_data& g)
 {
     std::vector<int> degs(g.nrows,0.);
+    
+    A.set_to_constant(0.);
     
     double vol = 0;
     for (int nzi=0; nzi<g.nnz; ++nzi) {
@@ -566,7 +571,6 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     
     switch (opts.matrix) {
         case graph_eigs_options::adjacency_matrix:
-            //assign_graph_laplacian(A.desc, A.A, g);
             mpi_world_printf("Constructing the adjacency matrix.\n");
             assign_graph_adjacency(A, g);
             break;
@@ -639,9 +643,14 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         }
         
         tlist.start_event("eigensolve");
+        //assign_graph_normalized_laplacian(P.A, g);
         P.tridiag_compute();
         tlist.end_event();
-        if (root) { tlist.report_event(4); }
+        if (root) { tlist.report_event(4); } 
+        
+        // TODO REMOVE THIS stuff uncomment the above.
+        //assign_graph_normalized_laplacian(P.A, g);
+        //P.compute();
         
         if (opts.eigenvalues && root)  {
             write_data_safely("eigenvalues", "W", 2,
@@ -649,6 +658,15 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         }
         
         if (opts.eigenvectors) {
+            if (opts.vectors) {
+                // write the matrix on the root processor
+                if (root) {
+                    printf("    Writing eigenvectors to %s.\n", 
+                        opts.vectors_filename.c_str());
+                }
+                P.Z.write(opts.vectors_filename, 0, 0);
+            }
+
             if (opts.residuals) {
                 std::vector<double> resids;
                 tlist.start_event("residuals");
@@ -676,14 +694,6 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
                     write_data_safely("iparscores", "p", 2,
                         opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
                 }
-            }
-            if (opts.vectors) {
-                // write the matrix on the root processor
-                if (root) {
-                    printf("    Writing eigenvectors to %s.\n", 
-                        opts.vectors_filename.c_str());
-                }
-                P.Z.write(opts.vectors_filename, 0, 0);
             }
         }
         

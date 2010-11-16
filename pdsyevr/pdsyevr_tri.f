@@ -1,7 +1,7 @@
       SUBROUTINE PDSYEVR_TRI( JOBC, JOBZ, RANGE, UPLO, N, A, IA, JA, 
      $                    DESCA, VL, VU, IL, IU, M, NZ, W, Z, IZ,
      $                    JZ, DESCZ, WORK, LWORK, IWORK, LIWORK, JSTATE,
-     $                    INFO )
+     $                    TAU1, INFO )
 
       IMPLICIT NONE
 *
@@ -14,7 +14,7 @@
       CHARACTER          JOBC, JOBZ, RANGE, UPLO
       INTEGER            IA, IL, INFO, IU, IZ, JA, JZ, LIWORK, LWORK, M,
      $                   N, NZ
-      DOUBLE PRECISION   VL, VU
+      DOUBLE PRECISION   VL, VU, TAU1
 *     ..
 *     .. Array Arguments ..
       INTEGER            DESCA( * ), DESCZ( * ), IWORK( * ), JSTATE( * )
@@ -239,6 +239,12 @@
 *
 *          The minimum length must be 3.
 *
+*  TAU1    (global input/output) DOUBLE PRECISION 
+*          This value describes a value that must be preserved between
+*          calls as JOBC changes.
+*          If JOBC='T' then this value must not be changed before
+*          the call with JOBC='D'
+*
 *  INFO    (global output) INTEGER
 *          = 0:  successful exit
 *          < 0:  If the i-th argument is an array and the j-entry had
@@ -329,7 +335,8 @@
 *     ..
 *     .. Local Scalars ..
       LOGICAL            ALLEIG, COLBRT, DOBCST, FINISH, FIRST, INDEIG,
-     $                   LOWER, LQUERY, VALEIG, VSTART, WANTZ, JTRIDIA
+     $                   LOWER, LQUERY, VALEIG, VSTART, WANTZ, JTRIDIA,
+     $                   JFULEIG
       INTEGER            ANB, DOL, DOU, DSTCOL, DSTROW, EIGCNT, FRSTCL,
      $                   I, IAROW, ICTXT, IIL, IINDERR, IINDWLC, IINFO,
      $                   IIU, IM, INDD, INDD2, INDE, INDE2, INDERR,
@@ -385,6 +392,7 @@
       LQUERY = ( LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )
       
       JTRIDIA = LSAME( JOBC, 'T' )
+      JFULEIG = LSAME( JOBC, 'A' )
 
 ***********************************************************************
 *
@@ -607,7 +615,7 @@
          VUU = ZERO
       END IF
 
-      IF( JTRIDIA ) THEN
+      IF( JTRIDIA .OR. JFULEIG ) THEN
 *
 *     No scaling done here, leave this to MRRR kernel.
 *     Scale tridiagonal rather than full matrix.
@@ -664,8 +672,12 @@
           JSTATE(1) = INDD2
           JSTATE(2) = INDE2
           JSTATE(3) = OFFSET
-          RETURN
+          TAU1 = WORK( INDTAU )
+          IF ( JTRIDIA ) THEN
+              RETURN
+          END IF
       ELSE
+          WORK( INDTAU ) = TAU1
           OFFSET = JSTATE(3)
       END IF
 
