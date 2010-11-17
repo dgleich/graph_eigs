@@ -15,6 +15,7 @@
  * :2010-11-10: resuming coding after finishing lapeigs in C with all
  *   desired scalapack features.
  * :2010-11-14: Added Markov matrix
+ * :2010-11-17: Added graph checking
  * 
  * Todo
  * ----
@@ -538,6 +539,18 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         printf("  Vertices: %i\n", g.nrows);
         printf("  Edges: %i\n", g.nnz);
         printf("\n");
+        
+        if (opts.verbose) {
+            printf("Checking graph data.\n");
+        }
+        if (g.min_degree() < 1) {
+            printf("Error: the graph has a disconnected vertex.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        if (!g.is_symmetric()) {
+            printf("Error: the graph is not-symmetric.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
         
         if (opts.verbose) {
             printf("Broadcasting graph data.\n");
