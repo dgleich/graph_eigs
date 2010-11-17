@@ -1,7 +1,7 @@
       SUBROUTINE PDSYEVR_TRI( JOBC, JOBZ, RANGE, UPLO, N, A, IA, JA, 
      $                    DESCA, VL, VU, IL, IU, M, NZ, W, Z, IZ,
      $                    JZ, DESCZ, WORK, LWORK, IWORK, LIWORK, JSTATE,
-     $                    TAU1, INFO )
+     $                    INFO )
 
       IMPLICIT NONE
 *
@@ -14,7 +14,7 @@
       CHARACTER          JOBC, JOBZ, RANGE, UPLO
       INTEGER            IA, IL, INFO, IU, IZ, JA, JZ, LIWORK, LWORK, M,
      $                   N, NZ
-      DOUBLE PRECISION   VL, VU, TAU1
+      DOUBLE PRECISION   VL, VU
 *     ..
 *     .. Array Arguments ..
       INTEGER            DESCA( * ), DESCZ( * ), IWORK( * ), JSTATE( * )
@@ -176,13 +176,13 @@
 *             required to compute eigenvalues and eigenvectors.
 *
 *  LWORK   (local input) INTEGER
-*          Size of WORK, must be at least 3.
+*          Size of WORK, must be at least 5.
 *          See below for definitions of variables used to define LWORK.
 *          If no eigenvectors are requested (JOBZ = 'N') then
-*             LWORK >= 2 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
+*             LWORK >= 4 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
 *          If eigenvectors are requested (JOBZ = 'V' ) then
 *             the amount of workspace required is:
-*             LWORK >= 2 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
+*             LWORK >= 4 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
 *               (2 + ICEIL( NEIG, NPROW*NPCOL))*NN
 *
 *          Variable definitions:
@@ -238,12 +238,6 @@
 *          the prior call.
 *
 *          The minimum length must be 3.
-*
-*  TAU1    (global input/output) DOUBLE PRECISION 
-*          This value describes a value that must be preserved between
-*          calls as JOBC changes.
-*          If JOBC='T' then this value must not be changed before
-*          the call with JOBC='D'
 *
 *  INFO    (global output) INTEGER
 *          = 0:  successful exit
@@ -407,7 +401,7 @@
 *     Set up pointers into the WORK array
 *     
 ***********************************************************************
-      INDTAU = 1
+      INDTAU = 3
       INDD = INDTAU + N
       INDE = INDD + N + 1
       INDD2 = INDE + N + 1
@@ -672,12 +666,10 @@
           JSTATE(1) = INDD2
           JSTATE(2) = INDE2
           JSTATE(3) = OFFSET
-          TAU1 = WORK( INDTAU )
           IF ( JTRIDIA ) THEN
               RETURN
           END IF
       ELSE
-          WORK( INDTAU ) = TAU1
           OFFSET = JSTATE(3)
       END IF
 

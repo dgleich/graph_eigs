@@ -60,14 +60,14 @@ test_polblogs: graph_eigs
 	
 test_Caltech: graph_eigs
 	rm -rf test/Caltech36.smat.*
-	./graph_eigs test/Caltech36.smat -a -r -p > /dev/null
+	mpirun -np 4 ./graph_eigs test/Caltech36.smat -a -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -a --check-eigs test/Caltech36.smat.adjacency.eigs --check-ipar test/Caltech36.smat.adjacency.ipar
-	./graph_eigs test/Caltech36.smat -l -r -p > /dev/null
+	mpirun -np 4 ./graph_eigs test/Caltech36.smat -l -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -l --check-eigs test/Caltech36.smat.laplacian.eigs --check-ipar test/Caltech36.smat.laplacian.ipar
-	./graph_eigs test/Caltech36.smat -n -r -p > /dev/null
+	mpirun -np 4 ./graph_eigs test/Caltech36.smat -n -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -n --check-eigs test/Caltech36.smat.normalized.eigs --check-ipar test/Caltech36.smat.normalized.ipar
 	python graph_eigs.py test/Caltech36.smat --type=markov --check-eigs test/Caltech36.smat.normalized-markov.eigs --check-ipar test/Caltech36.smat.normalized-markov.ipar
-	./graph_eigs test/Caltech36.smat -m -r -p > /dev/null
+	mpirun -np 4 ./graph_eigs test/Caltech36.smat -m -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -m --check-eigs test/Caltech36.smat.modularity.eigs --check-ipar test/Caltech36.smat.modularity.ipar
 	
 

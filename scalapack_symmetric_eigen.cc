@@ -41,7 +41,7 @@ extern void pdsyevr_tri_( char* jobc, char *jobz, char *range, char *uplo, int *
                      double *vl, double *vu, int *il, int *iu, int *m, int *nz,
                      double *w, double *z, int *iz, int *jz, int *descz, 
                      double *work, int *lwork, int *iwork, int *liwork,
-                     int *jstate, double* tau1, int *info );  
+                     int *jstate, int *info );  
                      
 #ifdef __cplusplus
 };
@@ -475,8 +475,8 @@ struct scalapack_symmetric_eigen {
         } else {
             // do a workspace query
             int ione=1, izero=0, nvals, nvecs, lworkq=-1, info;
-            double worksize[3];
-            int iworksize[3];
+            double worksize[5];
+            int iworksize[5];
             double dzero=0.;
             char* jobz="N";
             if (vectors) {
@@ -493,7 +493,7 @@ struct scalapack_symmetric_eigen {
                 worksize, &lworkq, iworksize, &lworkq,
                 &info);
                 
-            lwork = (int)worksize[0];
+            lwork = (int)worksize[0]+3;
             liwork = (int)iworksize[0];
         }
     }
@@ -547,13 +547,13 @@ struct scalapack_symmetric_eigen {
             if (n % (nprow*npcol) != 0) {
                 nz += 1;
             }
-            return 2 + 5*n + nextra + (2 + nz)*nn;
+            return 4 + 5*n + nextra + (2 + nz)*nn;
         } else {            
             int nextra = 12*nn;
             if ((nb * (np0 + 1)) > nextra) {
                 nextra = (nb * (np0 + 1));
             }
-            return 2 + 5*n + nextra;
+            return 4 + 5*n + nextra;
         }
     }
     
@@ -595,7 +595,7 @@ struct scalapack_symmetric_eigen {
             values, // eigenvalue output
             Z.A, &ione, &ione, Z.desc, // eigenvector output
             work, &lwork, iwork, &liwork, // workspace
-            jstate, &tau1, // job state
+            jstate, // job state
             &info);
             
         assert(info == 0);
@@ -627,7 +627,7 @@ struct scalapack_symmetric_eigen {
             values, // eigenvalue output
             Z.A, &ione, &ione, Z.desc, // eigenvector output
             work, &lwork, iwork, &liwork, // workspace
-            jstate, &tau1, // job state
+            jstate, // job state
             &info);
             
         _restore_diagonal();

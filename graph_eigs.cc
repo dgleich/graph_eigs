@@ -260,14 +260,12 @@ void assign_graph_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
     for (int nzi=0; nzi<g.nnz; ++nzi) {
         int i = g.r[nzi];
         int j = g.c[nzi];
-        if (i != j) {
-            degs[g.r[nzi]] += 1;
-            A.incr(i,j,-1.);
-        }
+        A.incr(i,j,-1.);
+        degs[g.r[nzi]] += 1;
     }
     
     for (int i=0; i<g.nrows; ++i) {
-        A.set(i,i,(double)degs[i]);
+        A.incr(i,i,(double)degs[i]);
     }
 }
 
@@ -643,14 +641,9 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         }
         
         tlist.start_event("eigensolve");
-        //assign_graph_normalized_laplacian(P.A, g);
         P.tridiag_compute();
         tlist.end_event();
         if (root) { tlist.report_event(4); } 
-        
-        // TODO REMOVE THIS stuff uncomment the above.
-        //assign_graph_normalized_laplacian(P.A, g);
-        //P.compute();
         
         if (opts.eigenvalues && root)  {
             write_data_safely("eigenvalues", "W", 2,
@@ -665,6 +658,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
                         opts.vectors_filename.c_str());
                 }
                 P.Z.write(opts.vectors_filename, 0, 0);
+                write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
             }
 
             if (opts.residuals) {
