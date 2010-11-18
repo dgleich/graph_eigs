@@ -121,6 +121,12 @@ struct graph_eigs_options {
     
     bool markov;
     
+    enum driver_type {
+        qr=1,
+        mrrr=2,
+    };
+    driver_type solver;
+    
     enum matrix_type {
         adjacency_matrix=1,
         laplacian_matrix=2,
@@ -153,7 +159,7 @@ struct graph_eigs_options {
     : verbose(false),  tridiag(false), 
       residuals(true), iparscores(false), vectors(false),
       eigenvalues(true), eigenvectors(false),
-      markov(true), matrix(normalized_laplacian_matrix),
+      markov(true), solver(mrrr), matrix(normalized_laplacian_matrix),
       nb(176), minmemory(true)
     {}
     

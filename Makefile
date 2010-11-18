@@ -26,7 +26,7 @@ lapeigs :  lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR
 
 graph_eigs.o : graph_eigs_opts.hpp triplet_graph.hpp scalapack_symmetric_eigen.cc
 
-graph_eigs : graph_eigs.o mpiutil.o pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR) 
+graph_eigs : graph_eigs.o mpiutil.o pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o pdsyev_tri.o $(PSTEGR) 
 
 clean:
 	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)
@@ -60,14 +60,14 @@ test_polblogs: graph_eigs
 	
 test_Caltech: graph_eigs
 	rm -rf test/Caltech36.smat.*
-	mpirun -np 4 ./graph_eigs test/Caltech36.smat -a -r -p > /dev/null
+	./graph_eigs test/Caltech36.smat -a -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -a --check-eigs test/Caltech36.smat.adjacency.eigs --check-ipar test/Caltech36.smat.adjacency.ipar
-	mpirun -np 4 ./graph_eigs test/Caltech36.smat -l -r -p > /dev/null
+	./graph_eigs test/Caltech36.smat -l -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -l --check-eigs test/Caltech36.smat.laplacian.eigs --check-ipar test/Caltech36.smat.laplacian.ipar
-	mpirun -np 4 ./graph_eigs test/Caltech36.smat -n -r -p > /dev/null
+	./graph_eigs test/Caltech36.smat -n -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -n --check-eigs test/Caltech36.smat.normalized.eigs --check-ipar test/Caltech36.smat.normalized.ipar
 	python graph_eigs.py test/Caltech36.smat --type=markov --check-eigs test/Caltech36.smat.normalized-markov.eigs --check-ipar test/Caltech36.smat.normalized-markov.ipar
-	mpirun -np 4 ./graph_eigs test/Caltech36.smat -m -r -p > /dev/null
+	./graph_eigs test/Caltech36.smat -m -r -p > /dev/null
 	python graph_eigs.py test/Caltech36.smat -m --check-eigs test/Caltech36.smat.modularity.eigs --check-ipar test/Caltech36.smat.modularity.ipar
 	
 

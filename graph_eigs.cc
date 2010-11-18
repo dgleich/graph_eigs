@@ -563,6 +563,18 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     // we now allocate memory for the dense matrix to store the graph
     scalapack_distributed_matrix A;
     int n = g.nrows;
+    if (opts.nb > n) {
+        int newnb = opts.nb;
+        
+        while (newnb>1 && newnb>n/nprow) {
+            newnb = newnb/2;
+        }
+        if (opts.verbose && root) {
+            printf("Adjusting nb=%i to nb=%i because n=%i\n", 
+                opts.nb, newnb, n);
+        }
+        opts.nb = newnb;
+    }
     A.init(ictxt, n, n, opts.nb, opts.nb);
     
     tlist.start_event("construct_matrix");

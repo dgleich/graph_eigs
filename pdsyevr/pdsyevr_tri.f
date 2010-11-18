@@ -176,13 +176,13 @@
 *             required to compute eigenvalues and eigenvectors.
 *
 *  LWORK   (local input) INTEGER
-*          Size of WORK, must be at least 5.
+*          Size of WORK, must be at least 6.
 *          See below for definitions of variables used to define LWORK.
 *          If no eigenvectors are requested (JOBZ = 'N') then
-*             LWORK >= 4 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
+*             LWORK >= 5 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
 *          If eigenvectors are requested (JOBZ = 'V' ) then
 *             the amount of workspace required is:
-*             LWORK >= 4 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
+*             LWORK >= 5 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
 *               (2 + ICEIL( NEIG, NPROW*NPCOL))*NN
 *
 *          Variable definitions:
@@ -401,7 +401,7 @@
 *     Set up pointers into the WORK array
 *     
 ***********************************************************************
-      INDTAU = 3
+      INDTAU = 4
       INDD = INDTAU + N
       INDE = INDD + N + 1
       INDD2 = INDE + N + 1
