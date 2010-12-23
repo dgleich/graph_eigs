@@ -14,10 +14,12 @@
  * :2010-10-07: Initial coding
  * :2010-11-10: resuming coding after finishing lapeigs in C with all
  *   desired scalapack features.
+ * :2010-11-14: Added Markov matrix
+ * :2010-11-17: Added graph checking
  * 
  * Todo
  * ----
- * TODO fix adjacency/laplacian/nlaplacian to handle repeated edges
+ * TODO output extremal eigenvalues for checking
  * TODO add report with output:
  *   - graph name
  *   - number of vertices
@@ -56,6 +58,7 @@
  *      (other useful info 
  * 
  * The entire report shouldn't be too large on disk, and should
+ * The entire report shouldn't be too large on disk, and should
  * be in a human and computer readerable format (json, yaml)
  */
 
@@ -82,7 +85,7 @@
 #include "triplet_graph.hpp"
 #include "graph_eigs_opts.hpp"
 
-const int graph_eigs_version = 2;
+const int graph_eigs_version = 3;
 
 void write_header(void) {
     mpi_world_printf("\n");
@@ -132,6 +135,7 @@ struct wall_time_list {
     void end_event() {
         assert(events.size() > 0);
         events.back().second = MPI_Wtime() - t0;
+        ttime += events.back().second;
     }
     
     void report_event( unsigned int indent = 0 ) {
@@ -235,84 +239,115 @@ bool write_matrix(const char* filename, double *a, size_t m, size_t n) {
 /**
  * The memory in A must be zeroed
  */
-void assign_graph_adjacency(int* desca, double* A, triplet_data& g)
+void assign_graph_adjacency(scalapack_distributed_matrix& A, triplet_data& g)
 {
-    std::vector<int> degs(g.nrows);
+    A.set_to_constant(0.);
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        double a = 1.;
-        pdelset_(A, &i, &j, desca, &a);
+        A.incr(g.r[nzi], g.c[nzi], 1.);
     }
 }
 
 /**
- * The memory in A must be zeroed
  */
-void assign_graph_laplacian(int* desca, double* A, triplet_data& g)
+void assign_graph_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
 {
-    std::vector<int> degs(g.nrows);
+    std::vector<int> degs(g.nrows, 0);
     
-    // here, we use the function pdelset_
-    // which only performs an assignment on the correct node
-    // so we don't have to worry about the block-cyclic organization
+    A.set_to_constant(0.);
+    
+    // the diagonal entries of the laplacian cancel out, so don't count them.
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        double a = -1.;
-        if (i != j) {
-            degs[g.r[nzi]] += 1;
-            pdelset_(A, &i, &j, desca, &a);
-        }
+        int i = g.r[nzi];
+        int j = g.c[nzi];
+        A.incr(i,j,-1.);
+        degs[g.r[nzi]] += 1;
     }
     
-    for (int i=1; i<=g.nrows; ++i) {
-        double a = degs[i-1];
-        pdelset_(A, &i, &i, desca, &a);
+    for (int i=0; i<g.nrows; ++i) {
+        A.incr(i,i,(double)degs[i]);
     }
-
 }
 
-void assign_graph_normalized_laplacian(int* desca, double* A, triplet_data& g)
+/**
+ * This routine creates a non-symmetric matrix.  It cannot be used
+ * to construct a matrix for scalapack_symmetric_eigen.  Instead, 
+ * see how we use the normalized laplacian to construct the Markov matrix.
+ */
+void assign_graph_markov(scalapack_distributed_matrix& A, triplet_data& g)
 {
-    std::vector<int> degs(g.nrows);
-    std::vector<int> diag(g.nrows,0.);
+    std::vector<int> degs(g.nrows, 0);
     
-    // here, we use the function pdelset_
-    // which only performs an assignment on the correct node
-    // so we don't have to worry about the block-cyclic organization
+    A.set_to_constant(0.);
+    
+    // the diagonal entries of the laplacian cancel out, so don't count them.
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        degs[g.r[nzi]] += 1;
+    }
+    
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        int i = g.r[nzi];
+        int j = g.c[nzi];
+        assert(degs[i] > 0);
+        assert(degs[j] > 0);
+        double a = 1./((double)degs[i]);
+        
+        A.incr(g.r[nzi],g.c[nzi],a);
+    }
+  
+}
+
+void assign_graph_normalized_laplacian(scalapack_distributed_matrix& A, triplet_data& g)
+{
+    std::vector<int> degs(g.nrows,0.);
+    
+    A.set_to_constant(0.);
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
         degs[g.r[nzi]] += 1;
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        if (i == j) {
-            diag[i-1] += 1;
+    }
+    
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        int i = g.r[nzi];
+        int j = g.c[nzi];
+        assert(degs[i] > 0);
+        assert(degs[j] > 0);
+        double a = -1./(sqrt((double)degs[i])*sqrt((double)degs[j]));
+        
+        A.incr(g.r[nzi],g.c[nzi],a);
+    }
+    for (int i=0; i<g.nrows; i++) {
+        A.incr(i,i,1.0);
+    }
+}
+
+void assign_graph_modularity(scalapack_distributed_matrix& A, triplet_data& g)
+{
+    std::vector<int> degs(g.nrows,0.);
+    
+    A.set_to_constant(0.);
+    
+    double vol = 0;
+    for (int nzi=0; nzi<g.nnz; ++nzi) {
+        degs[g.r[nzi]] += 1;
+        vol += 1.;
+    }
+    
+    double ivol = 1./vol;
+    
+    for (int li = 0; li<A.ap; ++li) {
+        for (int lj = 0; lj<A.aq; ++lj) {
+            int gi, gj;
+            A.local2global(li,lj,gi,gj);
+            A.A[li+lj*A.ap] = -1.0*ivol*(double)degs[gi]*(double)degs[gj];
         }
     }
     
     for (int nzi=0; nzi<g.nnz; ++nzi) {
-        int i = g.r[nzi]+1;
-        int j = g.c[nzi]+1;
-        double a = -1.;
-        if (degs[i-1] > 0 && degs[j-1] > 0) {
-            a = -1./(sqrt((double)degs[i-1])*sqrt((double)degs[j-1]));
-        } else {
-            // we'll have to figure out how to handle this case later
-            assert(false);
-        }
-        if (i != j) {
-            pdelset_(A, &i, &j, desca, &a);
-        } 
+        A.incr(g.r[nzi], g.c[nzi], 1.);
     }
     
-    for (int i=1; i<=g.nrows; ++i) {
-        double a = 1.0 - (double)diag[i-1]/(double)degs[i-1];
-        pdelset_(A, &i, &i, desca, &a);
-    }
-
 }
 
 /** Initialize blacs
@@ -354,6 +389,117 @@ void write_data_safely(const char *type, const char* vname, unsigned int indent,
     }
 }
 
+/** Output any residuals that are larger than a set scale. 
+ * This function is useful to indicate any problems with the computation.
+ * @param resids the residuals associated with each eigenvector.
+ * @param scale a 
+ * @param tol the large residual tolerance
+ */
+void find_large_residuals(std::vector<double>& resids, double *scale, double tol)
+{
+    printf("   Checking for residuals larger than %.2e.\n", tol);
+    for (size_t i=0; i<resids.size(); ++i) {
+        double err = fabs(resids[i])/(fabs(scale[i])+1.);
+        if (err > tol) {
+            if (err > 1000*tol) {
+                printf(" **** Residual %Zu is EXTREMELY large: %.18e ; eval=%.2e\n", 
+                    i, err, scale[i]);
+            } else {
+                printf("      Residual %Zu is large: %.18e ; eval=%.2e\n",
+                    i, err, scale[i]);
+            }
+        }
+    }
+}
+
+/** Compute data on the Markov matrix from the normalized Laplacian.
+ * For an undirected graph, the eigenvalues and vectors of the 
+ * Markov chain transition matrix can be computed via the eigenvalues
+ * and eigenvectors of the normalized Laplacian matrix.  This function
+ * transforms the eigenvectors and values, and also outputs the
+ * new information.
+ *
+ * *IT DESTROYS INFORMATION IN A and P*, the matrix and problem.
+ * 
+ * @param g the graph
+ * @param A the current matrix
+ * @param P the current eigensystem
+ * */
+void output_markov_data(triplet_data& g,
+    scalapack_distributed_matrix& A, 
+    scalapack_symmetric_eigen& P)
+{
+    int myrow, mycol, nprow, npcol;
+    Cblacs_gridinfo(A.ictxt, &nprow, &npcol, &myrow, &mycol );
+    bool root = myrow == 0 && mycol == 0;
+    
+    assert(opts.matrix == opts.normalized_laplacian_matrix);
+        
+    // change the eigenvalues
+    for (int i=0; i<P.n; ++i) {
+        P.values[i] = 1.0 - P.values[i];
+    }
+    
+    if (opts.eigenvalues && root)  {
+        write_data_safely("Markov eigenvalues", "mw", 2,
+            opts.markov_values_filename.c_str(), P.values, P.n, 1, false);
+    }
+        
+    if (opts.eigenvectors) {
+        // compute graph degrees
+        assert(g.nrows == P.n);
+        std::vector<double> degs(g.nrows, 0.);
+        for (int nzi=0; nzi<g.nnz; ++nzi) {
+            degs[g.r[nzi]] += 1.;
+        }
+        // invert graph degres
+        for (int i=0; i<g.nrows; ++i) {
+            assert(degs[i] > 0);
+            degs[i] = sqrt(1.0/(double)degs[i]);
+        }
+        
+        // scale the eigenvectors
+        P.Z.scale_rows(&degs[0], 1.0);
+        
+        if (opts.residuals) {
+            std::vector<double> resids;
+            tlist.start_event("markov_residuals");
+            assign_graph_markov(P.A, g);
+            P.reloaded_residuals(resids);
+            tlist.end_event();
+            if (root) { tlist.report_event(6); }
+            
+            if (root) {
+                write_data_safely("Markov residuals", "mr", 2,
+                    opts.markov_residuals_filename.c_str(), &resids[0], P.n, 1, false);
+            }
+            
+            if (root) {
+                find_large_residuals(resids, P.values, 2.e-16*P.n);
+            }
+        }
+        if (opts.iparscores) {
+            std::vector<double> ipars;
+            tlist.start_event("markov_iparscores");
+            P.Z.inverse_participation_ratios(ipars, false);  
+            tlist.end_event();
+            if (root) { tlist.report_event(6); }
+            
+            if (root) {
+                write_data_safely("Markov iparscores", "mp", 2,
+                    opts.markov_ipar_filename.c_str(), &ipars[0], P.n, 1, false);
+            }
+        }
+        if (opts.vectors) {
+            // write the matrix on the root processor
+            if (root) {
+                printf("    Writing eigenvectors to %s.\n", 
+                    opts.markov_vectors_filename.c_str());
+            }
+            P.Z.write(opts.markov_vectors_filename, 0, 0);
+        }
+    }
+}    
 
 int main_blacs(int argc, char **argv, int nprow, int npcol) 
 {
@@ -365,6 +511,10 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     Cblacs_get(-1,0,&ictxt);
     Cblacs_gridinit(&ictxt, "R", npcol, npcol);    
     Cblacs_gridinfo(ictxt, &nprow, &npcol, &myrow, &mycol );
+    
+    if (myrow == -1) {
+        return (0);
+    }
     
     bool root = (myrow == 0 && mycol == 0);
     
@@ -391,6 +541,18 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         printf("\n");
         
         if (opts.verbose) {
+            printf("Checking graph data.\n");
+        }
+        if (g.min_degree() < 1) {
+            printf("Error: the graph has a disconnected vertex.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        if (!g.is_symmetric()) {
+            printf("Error: the graph is not-symmetric.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        
+        if (opts.verbose) {
             printf("Broadcasting graph data.\n");
         }
         
@@ -401,15 +563,27 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     // we now allocate memory for the dense matrix to store the graph
     scalapack_distributed_matrix A;
     int n = g.nrows;
+    if (opts.nb > n) {
+        int newnb = opts.nb;
+        
+        while (newnb>1 && newnb>n/nprow) {
+            newnb = newnb/2;
+        }
+        if (opts.verbose && root) {
+            printf("Adjusting nb=%i to nb=%i because n=%i\n", 
+                opts.nb, newnb, n);
+        }
+        opts.nb = newnb;
+    }
     A.init(ictxt, n, n, opts.nb, opts.nb);
     
     tlist.start_event("construct_matrix");
     
     // allocate local storage for the matrix
     if (opts.verbose) {
-        printf("[%3i x %3i] allocating %Zu bytes for A (n=%i, nb=%i, ap=%i, aq=%i)\n",
+        printf("[%3i x %3i] allocating %Zu bytes for A (n=%i, mb=%i, nb=%i, ap=%i, aq=%i)\n",
             myrow, mycol, A.bytes(),
-            A.n, A.nb, A.ap, A.aq );
+            A.n, A.mb, A.nb, A.ap, A.aq );
     }
         
     if (!A.allocate()) {
@@ -420,30 +594,30 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     
     switch (opts.matrix) {
         case graph_eigs_options::adjacency_matrix:
-            //assign_graph_laplacian(A.desc, A.A, g);
             mpi_world_printf("Constructing the adjacency matrix.\n");
-            assign_graph_adjacency(A.desc, A.A, g);
+            assign_graph_adjacency(A, g);
             break;
             
         case graph_eigs_options::laplacian_matrix:
             mpi_world_printf("Constructing the Laplacian matrix.\n");
-            assign_graph_laplacian(A.desc, A.A, g);
+            assign_graph_laplacian(A, g);
             break;
             
         case graph_eigs_options::normalized_laplacian_matrix:
             mpi_world_printf("Constructing the normalized Laplacian matrix.\n");
-            assign_graph_normalized_laplacian(A.desc, A.A, g);
+            assign_graph_normalized_laplacian(A, g);
             break;
             
         case graph_eigs_options::modularity_matrix:
             mpi_world_printf("Constructing the modularity matrix.\n");
-            assert(false);
+            assign_graph_modularity(A, g);
             break;
     }
     tlist.end_event();
     if (root) {
         tlist.report_event(2);
     }
+    if (root) { printf("\n"); }
     
     scalapack_symmetric_eigen P(A);
         
@@ -451,7 +625,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     
     if (opts.verbose) {
         printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
-            myrow, mycol, P.bytes(), P.myZ*P.Z.ap*P.Z.aq, P.lwork);
+            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork);
     }
     
     if (!P.allocate()) {
@@ -494,25 +668,47 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         tlist.start_event("eigensolve");
         P.tridiag_compute();
         tlist.end_event();
-        if (root) { tlist.report_event(4); }
+        if (root) { tlist.report_event(4); } 
         
-        if (opts.eigenvalues && myrow==0 && mycol==0)  {
+        if (opts.eigenvalues && root)  {
             write_data_safely("eigenvalues", "W", 2,
                 opts.values_filename.c_str(), P.values, n, 1, false);
         }
         
         if (opts.eigenvectors) {
+            if (opts.vectors) {
+                // write the matrix on the root processor
+                if (root) {
+                    printf("    Writing eigenvectors to %s.\n", 
+                        opts.vectors_filename.c_str());
+                }
+                P.Z.write(opts.vectors_filename, 0, 0);
+                write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
+            }
+
             if (opts.residuals) {
                 std::vector<double> resids;
+                tlist.start_event("residuals");
                 P.residuals(resids);
+                tlist.end_event();
+                if (root) { tlist.report_event(6); }
+                
                 if (root) {
                     write_data_safely("residuals", "r", 2,
                         opts.residuals_filename.c_str(), &resids[0], n, 1, false);
                 }
+                
+                if (root) {
+                    find_large_residuals(resids, P.values, 2.2e-16*P.n);
+                }
             }
             if (opts.iparscores) {
                 std::vector<double> ipars;
+                tlist.start_event("iparscores");
                 P.Z.inverse_participation_ratios(ipars, true);  
+                tlist.end_event();
+                if (root) { tlist.report_event(6); }
+                
                 if (root) {
                     write_data_safely("iparscores", "p", 2,
                         opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
@@ -520,6 +716,17 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
             }
         }
         
+        // handle Markov matrix
+        if (opts.matrix == opts.normalized_laplacian_matrix && opts.markov) {
+            output_markov_data(g, A, P);
+        }
+    }
+    
+    if (root) {
+        printf("\n");
+        printf("Done.\n");
+        printf("  total_compute time: %.1f sec.\n", tlist.ttime);
+        printf("\n");
     }
     
     return (0);
@@ -571,6 +778,8 @@ int main(int argc, char **argv) {
         return (-1);
     }
     #endif /* BLACS_ALL */
+    
+    
     
 
     // initialize the blacs grid

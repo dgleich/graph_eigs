@@ -176,13 +176,13 @@
 *             required to compute eigenvalues and eigenvectors.
 *
 *  LWORK   (local input) INTEGER
-*          Size of WORK, must be at least 3.
+*          Size of WORK, must be at least 6.
 *          See below for definitions of variables used to define LWORK.
 *          If no eigenvectors are requested (JOBZ = 'N') then
-*             LWORK >= 2 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
+*             LWORK >= 5 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
 *          If eigenvectors are requested (JOBZ = 'V' ) then
 *             the amount of workspace required is:
-*             LWORK >= 2 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
+*             LWORK >= 5 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
 *               (2 + ICEIL( NEIG, NPROW*NPCOL))*NN
 *
 *          Variable definitions:
@@ -329,7 +329,8 @@
 *     ..
 *     .. Local Scalars ..
       LOGICAL            ALLEIG, COLBRT, DOBCST, FINISH, FIRST, INDEIG,
-     $                   LOWER, LQUERY, VALEIG, VSTART, WANTZ, JTRIDIA
+     $                   LOWER, LQUERY, VALEIG, VSTART, WANTZ, JTRIDIA,
+     $                   JFULEIG
       INTEGER            ANB, DOL, DOU, DSTCOL, DSTROW, EIGCNT, FRSTCL,
      $                   I, IAROW, ICTXT, IIL, IINDERR, IINDWLC, IINFO,
      $                   IIU, IM, INDD, INDD2, INDE, INDE2, INDERR,
@@ -385,6 +386,7 @@
       LQUERY = ( LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )
       
       JTRIDIA = LSAME( JOBC, 'T' )
+      JFULEIG = LSAME( JOBC, 'A' )
 
 ***********************************************************************
 *
@@ -399,7 +401,7 @@
 *     Set up pointers into the WORK array
 *     
 ***********************************************************************
-      INDTAU = 1
+      INDTAU = 4
       INDD = INDTAU + N
       INDE = INDD + N + 1
       INDD2 = INDE + N + 1
@@ -607,7 +609,7 @@
          VUU = ZERO
       END IF
 
-      IF( JTRIDIA ) THEN
+      IF( JTRIDIA .OR. JFULEIG ) THEN
 *
 *     No scaling done here, leave this to MRRR kernel.
 *     Scale tridiagonal rather than full matrix.
@@ -664,7 +666,9 @@
           JSTATE(1) = INDD2
           JSTATE(2) = INDE2
           JSTATE(3) = OFFSET
-          RETURN
+          IF ( JTRIDIA ) THEN
+              RETURN
+          END IF
       ELSE
           OFFSET = JSTATE(3)
       END IF

@@ -2,3 +2,5 @@ graph_eigs
 lapeigs
 *.o
 PDSYEVRnew*
+*.pyc
+test.*
