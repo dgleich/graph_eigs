@@ -1056,7 +1056,8 @@ public:
     }
 }; 
 
-class scalapack_symmetric_eigen_mrrr : scalapack_symmetric_eigen_std {
+class scalapack_symmetric_eigen_mrrr : 
+    public scalapack_symmetric_eigen_std {
 public:    
     int *iwork;
     int liwork;

@@ -78,6 +78,10 @@ void usage() {
     "      and do not compute eigenvalues.\n"
     "  --nomarkov  Skip the Markov matrix computation when computing with\n"
     "      the normalized Laplacian.\n"
+    "  --nocommute  Skip the commute time computation when computing with\n"
+    "      the Laplacian matrix.\n"
+    "  --nofiedler  Don't output the Fiedler vector when computing with\n"
+    "      either Laplacian matrix.\n"
     "\n"
     "  -o string, --output=string  Change the default output filename.\n"
     "      This string is used to construct the default output filenames.\n"
@@ -105,6 +109,9 @@ void usage() {
     "\n"
     "  --noresiduals  Skip computing the residuals (not recommended if\n"
     "      the eigenvectors are computed)\n"
+    "\n"
+    "The following option controls the eigensolver used.\n"
+    "  --solver 
     "\n";
     fprintf(stderr, "%s", usage);
 }
@@ -120,6 +127,8 @@ struct graph_eigs_options {
     bool eigenvectors;
     
     bool markov;
+    bool commute;
+    bool fiedler;
     
     enum driver_type {
         qr=1,
@@ -154,12 +163,19 @@ struct graph_eigs_options {
     std::string markov_residuals_filename;
     std::string markov_ipar_filename;
     
+    std::string commute_small_scores_filename;
+    std::string commute_large_scores_filename;
+    std::string commute_deviation_filename;
+    
+    std::string fiedler_vector_filename;
+    
     
     graph_eigs_options() 
     : verbose(false),  tridiag(false), 
       residuals(true), iparscores(false), vectors(false),
       eigenvalues(true), eigenvectors(false),
-      markov(true), solver(mrrr), matrix(normalized_laplacian_matrix),
+      markov(true), commute(true), fiedler(true),
+      solver(mrrr), matrix(normalized_laplacian_matrix),
       nb(176), minmemory(true)
     {}
     
@@ -172,6 +188,16 @@ struct graph_eigs_options {
             matrix = normalized_laplacian_matrix;
         else if (strcmp("modularity",string)==0) 
             matrix = modularity_matrix;
+        else
+            return false;
+        return true;
+    }
+    
+    bool set_driver_type_from_string(const char *string) {
+        if (strcmp("qr",string)==0) 
+            driver = qr;
+        else if (strcmp("mrrr",string)==0) 
+            driver = mrrr;
         else
             return false;
         return true;
@@ -237,7 +263,7 @@ struct graph_eigs_options {
             if (eigenvalues && _check_filename(markov_values_filename) == false) {
                 printf("Cannot access %s to write Markov eigenvalues\n",
                     markov_values_filename.c_str());
-                    return false;
+                return false;
             }
             
             if (vectors && _check_filename(markov_vectors_filename) == false) {
@@ -249,16 +275,44 @@ struct graph_eigs_options {
             if (residuals && _check_filename(markov_residuals_filename) == false) {
                 printf("Cannot access %s to write Markov residuals\n",
                     markov_residuals_filename.c_str());
-                    return false;
+                return false;
             }
             
             if (iparscores && _check_filename(markov_ipar_filename) == false) {
                 printf("Cannot access %s to write Markov ipar scores\n",
                     markov_ipar_filename.c_str());
-                    return false;
+                return false;
             }
         }
         
+        if ((matrix == normalized_laplacian_matrix ||
+             matrix == laplacian_matrix) && fiedler && vectors) {
+            if (_check_filename(fiedler_vector_filename) == false) {
+                printf("Cannot access %s to write Fiedler vector\n",
+                    fiedler_vector_filename.c_str());
+                return false;
+            }
+        }
+        
+        if (matrix == laplacian_matrix && commute && vectors) {
+            if (_check_filename(commute_deviation_filename) == false) {
+                printf("Cannot access %s to write commute-time deviation scores\n",
+                    commute_deviation_filename.c_str());
+                return false;
+            }
+            
+            if (_check_filename(commute_large_scores_filename) == false) {
+                printf("Cannot access %s to write large commute times\n",
+                    commute_large_scores_filename.c_str());
+                return false;
+            }
+            
+            if (_check_filename(commute_small_scores_filename) == false) {
+                printf("Cannot access %s to write small commute-times\n",
+                    commute_small_scores_filename.c_str());
+                return false;
+            }
+        }
         return true;
     }
     
@@ -297,7 +351,17 @@ struct graph_eigs_options {
                 // TODO come up with a better way of handing these cases.
                 assert(false);
             }
-                
+        }
+        
+        if ((matrix == normalized_laplacian_matrix ||
+             matrix == laplacian_matrix) && fiedler && vectors) {
+            fiedler_vector_filename = output_name + ".fiedler";
+        }
+        
+        if (matrix == laplacian_matrix && commute && vectors) {
+            commute_deviation_filename = output_name + ".commute_dev";
+            commute_large_scores_filename = output_name + ".commute_large";
+            commute_small_scores_filename = output_name + ".commute_small";
         }
         
         if (eigenvalues && values_filename.size() == 0) {
@@ -373,6 +437,8 @@ bool parse_command_line_arguments(int argc, char **argv) {
             {"noresiduals", no_argument, NULL, 0},
             {"novalues", no_argument, NULL, 0},
             {"nomarkov", no_argument, NULL, 0},
+            {"nocommute", no_argument, NULL, 0},
+            {"nofiedler", no_argument, NULL, 0},
             /* These do */
             {"blocksize", required_argument, NULL, 'b'},
             {"type", required_argument, NULL, 0},
@@ -382,6 +448,7 @@ bool parse_command_line_arguments(int argc, char **argv) {
             {"residuals", optional_argument, NULL, 'r'},
             {"iparscores", optional_argument, NULL, 'p'},
             {"vectors", optional_argument, NULL, 0},
+            {"solver", required_argument, NULL, 0},
             {NULL, no_argument, NULL, 0}
         };
     static const char *opt_string = "vhalnmt::r::p::o:b:";
@@ -441,6 +508,10 @@ bool parse_command_line_arguments(int argc, char **argv) {
                     opts.eigenvalues = false;
                 else if (strcmp("nomarkov",long_options[longindex].name)==0) 
                     opts.markov = false;
+                else if (strcmp("nocommute",long_options[longindex].name)==0) 
+                    opts.commute = false;
+                else if (strcmp("nofiedler",long_options[longindex].name)==0) 
+                    opts.fiedler = false;
                 else if (strcmp("values",long_options[longindex].name)==0) {
                     opts.eigenvalues = true;
                     if (optarg) {
@@ -452,7 +523,13 @@ bool parse_command_line_arguments(int argc, char **argv) {
                     if (optarg) {
                         opts.vectors_filename = std::string(optarg);
                     }
-                } else {
+                } else if (strcmp("solver",long_options[longindex].name)==0) {
+                    if (!opts.set_driver_type_from_string(optarg.c_str())) {
+                        printf("Invalid solver type: %s\n");
+                        return false;
+                    }
+                }
+                else {
                     // we shouldn't ever get here
                     assert(false);
                 }

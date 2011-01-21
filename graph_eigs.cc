@@ -20,6 +20,9 @@
  * Todo
  * ----
  * TODO output extremal eigenvalues for checking
+ * TODO Add commute time output for laplacian
+ * TODO Add Fiedler vector output for nlaplacian/laplacian
+ * TODO Add switching eigensolver
  * TODO add report with output:
  *   - graph name
  *   - number of vertices
@@ -85,7 +88,7 @@
 #include "triplet_graph.hpp"
 #include "graph_eigs_opts.hpp"
 
-const int graph_eigs_version = 3;
+const int graph_eigs_version = 4;
 
 void write_header(void) {
     mpi_world_printf("\n");
@@ -499,7 +502,123 @@ void output_markov_data(triplet_data& g,
             P.Z.write(opts.markov_vectors_filename, 0, 0);
         }
     }
-}    
+}   
+
+template <typename EigenSolver>
+int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A) {
+    
+    EigenSolver P(A);
+    
+    P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag);
+    
+    if (opts.verbose) {
+        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
+            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork);
+    }
+    
+    if (!P.allocate()) {
+        printf("[%3i x %3i] couldn't allocate memory, exiting...", 
+           myrow, mycol);
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+    
+    if (opts.eigenvectors == false && opts.eigenvalues == false) {
+        mpi_world_printf("Computing tridiagonal redunction only.\n");
+        tlist.start_event("tridiag_reduce");
+        P.tridiag_reduce();
+        tlist.end_event();
+        if (root) { tlist.report_event(2); }
+    } else {
+        if (opts.eigenvectors == false) {
+            mpi_world_printf("Computing eigenvalues.\n");
+        } else {
+            mpi_world_printf("Computing eigenvalues and eigenvectors.\n");
+        }
+            
+        mpi_world_printf("  Reducing to tridiagonal.\n");
+        
+        tlist.start_event("tridiag_reduce");
+        P.tridiag_reduce();
+        tlist.end_event();
+        if (root) { tlist.report_event(4); }
+        
+        if (opts.tridiag && myrow==0 && mycol==0)  {
+            write_data_safely("tridiagonal factors", "T", 2,
+                opts.tridiag_filename.c_str(), P.T, n, 2, true);
+        }
+        
+        if (opts.eigenvectors == false) {
+            mpi_world_printf("  Finding eigenvalues.\n");    
+        } else {
+            mpi_world_printf("  Finding eigenvalues and eigenvectors.\n");
+        }
+        
+        tlist.start_event("eigensolve");
+        P.tridiag_compute();
+        tlist.end_event();
+        if (root) { tlist.report_event(4); } 
+        
+        if (opts.eigenvalues && root)  {
+            write_data_safely("eigenvalues", "W", 2,
+                opts.values_filename.c_str(), P.values, n, 1, false);
+        }
+        
+        if (opts.eigenvectors) {
+            
+            if (opts.vectors) {
+                // write the matrix on the root processor
+                if (root) {
+                    printf("    Writing eigenvectors to %s.\n", 
+                        opts.vectors_filename.c_str());
+                }
+                P.Z.write(opts.vectors_filename, 0, 0);
+                //write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
+            }
+            
+            if (opts.fiedler) {
+                std::vector<double> fiedler;
+                find_fiedler(P.values, P.Z, fiedler);
+                write_data_safely("fiedler", "f", 2,
+                    opts.fiedler_filename.c_str(),  &fiedler[0], n, 1, false);
+            }
+
+            if (opts.residuals) {
+                std::vector<double> resids;
+                tlist.start_event("residuals");
+                P.residuals(resids);
+                tlist.end_event();
+                if (root) { tlist.report_event(6); }
+                
+                if (root) {
+                    write_data_safely("residuals", "r", 2,
+                        opts.residuals_filename.c_str(), &resids[0], n, 1, false);
+                }
+                
+                if (root) {
+                    find_large_residuals(resids, P.values, 2.2e-16*P.n);
+                }
+            }
+            
+            if (opts.iparscores) {
+                std::vector<double> ipars;
+                tlist.start_event("iparscores");
+                P.Z.inverse_participation_ratios(ipars, true);  
+                tlist.end_event();
+                if (root) { tlist.report_event(6); }
+                
+                if (root) {
+                    write_data_safely("iparscores", "p", 2,
+                        opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
+                }
+            }
+        }
+        
+        // handle Markov matrix
+        if (opts.matrix == opts.normalized_laplacian_matrix && opts.markov) {
+            output_markov_data(g, A, P);
+        }
+    }
+} 
 
 int main_blacs(int argc, char **argv, int nprow, int npcol) 
 {
@@ -619,108 +738,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     }
     if (root) { printf("\n"); }
     
-    scalapack_symmetric_eigen P(A);
-        
-    P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag);
-    
-    if (opts.verbose) {
-        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
-            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork);
-    }
-    
-    if (!P.allocate()) {
-        printf("[%3i x %3i] couldn't allocate memory, exiting...", 
-           myrow, mycol);
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-    
-    if (opts.eigenvectors == false && opts.eigenvalues == false) {
-        mpi_world_printf("Computing tridiagonal redunction only.\n");
-        tlist.start_event("tridiag_reduce");
-        P.tridiag_reduce();
-        tlist.end_event();
-        if (root) { tlist.report_event(2); }
-    } else {
-        if (opts.eigenvectors == false) {
-            mpi_world_printf("Computing eigenvalues.\n");
-        } else {
-            mpi_world_printf("Computing eigenvalues and eigenvectors.\n");
-        }
-            
-        mpi_world_printf("  Reducing to tridiagonal.\n");
-        
-        tlist.start_event("tridiag_reduce");
-        P.tridiag_reduce();
-        tlist.end_event();
-        if (root) { tlist.report_event(4); }
-        
-        if (opts.tridiag && myrow==0 && mycol==0)  {
-            write_data_safely("tridiagonal factors", "T", 2,
-                opts.tridiag_filename.c_str(), P.T, n, 2, true);
-        }
-        
-        if (opts.eigenvectors == false) {
-            mpi_world_printf("  Finding eigenvalues.\n");    
-        } else {
-            mpi_world_printf("  Finding eigenvalues and eigenvectors.\n");
-        }
-        
-        tlist.start_event("eigensolve");
-        P.tridiag_compute();
-        tlist.end_event();
-        if (root) { tlist.report_event(4); } 
-        
-        if (opts.eigenvalues && root)  {
-            write_data_safely("eigenvalues", "W", 2,
-                opts.values_filename.c_str(), P.values, n, 1, false);
-        }
-        
-        if (opts.eigenvectors) {
-            if (opts.vectors) {
-                // write the matrix on the root processor
-                if (root) {
-                    printf("    Writing eigenvectors to %s.\n", 
-                        opts.vectors_filename.c_str());
-                }
-                P.Z.write(opts.vectors_filename, 0, 0);
-                write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
-            }
-
-            if (opts.residuals) {
-                std::vector<double> resids;
-                tlist.start_event("residuals");
-                P.residuals(resids);
-                tlist.end_event();
-                if (root) { tlist.report_event(6); }
-                
-                if (root) {
-                    write_data_safely("residuals", "r", 2,
-                        opts.residuals_filename.c_str(), &resids[0], n, 1, false);
-                }
-                
-                if (root) {
-                    find_large_residuals(resids, P.values, 2.2e-16*P.n);
-                }
-            }
-            if (opts.iparscores) {
-                std::vector<double> ipars;
-                tlist.start_event("iparscores");
-                P.Z.inverse_participation_ratios(ipars, true);  
-                tlist.end_event();
-                if (root) { tlist.report_event(6); }
-                
-                if (root) {
-                    write_data_safely("iparscores", "p", 2,
-                        opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
-                }
-            }
-        }
-        
-        // handle Markov matrix
-        if (opts.matrix == opts.normalized_laplacian_matrix && opts.markov) {
-            output_markov_data(g, A, P);
-        }
-    }
+    main_compute<scalapack_symmetric_eigen>(root, g, A);
     
     if (root) {
         printf("\n");
