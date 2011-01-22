@@ -65,6 +65,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -72,6 +73,7 @@
 #include <assert.h>
 #include <getopt.h>
 
+#include <string>
 #include <vector>
 
 #include <mpi.h>
