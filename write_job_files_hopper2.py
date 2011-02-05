@@ -4,8 +4,10 @@ import sys
 import os
 import math
 
-dir = '/global/homes/d/dgleich/graph-db-eigs'
-prog = os.path.join(dir,'graph_eigs','graph_eigs')
+home_dir = '/panfs/scratch/home/dfgleic/'
+data_dir = os.path.join(home_dir,'data')
+prog_dir = os.path.join(home_dir,'graph_eigs')
+prog = os.path.join(prog_dir,'graph_eigs')
 
 def graph_size(filename):
     gfile = open(filename,'rt')
@@ -15,12 +17,15 @@ def graph_size(filename):
     return nverts
 
 graph = sys.argv[1]
-graphfile = os.path.join(dir,graph)
+graphfile = os.path.join(data_dir,graph)
 
 nverts = graph_size(graphfile)
 
-minnodes = math.ceil(float(nverts)*float(nverts)*4.*8./20000000000.)
-npernode = 2
+nodemem = 32000000000
+npernode = 24
+nthreads = 1
+
+minnodes = math.ceil(float(nverts)*float(nverts)*4.*8./float(nodemem))
 
 if len(sys.argv) > 2:
     nnodes = int(sys.argv[2])
@@ -29,7 +34,8 @@ if len(sys.argv) > 2:
     nmpiranks = int(gridsize*gridsize)
     
 else:    
-    nmpiranks = 64 # must be a square
+    nmpiranks = 144 # must be a square, 6 nodes
+
 
 nodes = int(math.ceil(nmpiranks/float(npernode)))
     
@@ -40,6 +46,7 @@ else:
     
 print "nodes = %i"%(nodes)
 print "mpiranks = %i"%(nmpiranks)
+print "nprocs = %i"%(nodes*npernode*nthreads)
 print "grid = %.1f x %.1f"%(math.sqrt(nmpiranks),math.sqrt(nmpiranks))
 perproc = int(math.ceil(float(nverts/math.sqrt(nmpiranks))))
 print "per-process = %i x %i"%(perproc,perproc)
@@ -49,25 +56,26 @@ assert(nodes > minnodes)
 
 
 # todo fix this
-params=dict(nodes=nodes, time=time, npernode=npernode,
+params=dict(nodes=nodes, time=time,  npernode=npernode,
+    nthreads=nthreads,
     nmpiranks=nmpiranks, prog=prog, graphfile=graphfile)
-script="""
-#PBS -q regular
-#PBS -l nodes=%(nodes)i:ppn=%(npernode)i
+script="""#!/bin/bash
+
+#PBS -l mppwidth=%(nmpiranks)i
+#PBS -l mppnppn=%(npernode)i
+#PBS -l mppdepth=%(nthreads)i
 #PBS -l walltime=%(time)s
-#PBS -l pvmem=13GB
 #PBS -N %%s
-#PBS -e pbs-carver-$PBS_JOBID.err
-#PBS -o pbs-carver-$PBS_JOBID.out
+#PBS -e $PBS_JOBID.err
+#PBS -o $PBS_JOBID.out
 #PBS -V
 
-module load mkl
-module switch pgi intel
+export GOTO_NUM_THREADS=%(nthreads)i
+export OMP_NUM_THREADS=%(nthreads)i
 
 cd $PBS_O_WORKDIR
 
-export OMP_NUM_THREADS=4
-mpirun -np %(nmpiranks)i --npernode %(npernode)i \\
+aprun -n %(nmpiranks)i -N %(npernode)i -d %(nthreads)i\\
    %(prog)s \\
    %(graphfile)s \\
    -v -t -r -p \\
