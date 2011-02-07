@@ -626,8 +626,10 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
     P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag);
     
     if (opts.verbose) {
-        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
-            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork);
+        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; "
+               "Z=%i, work=%i, iwork=%i\n",
+            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork, 
+            P.liwork);
     }
     
     if (!P.allocate()) {
