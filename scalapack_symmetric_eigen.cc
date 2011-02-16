@@ -102,6 +102,9 @@ struct scalapack_distributed_matrix {
         }
     }
     
+    /** Output the matrix to the console.
+     * Should only be used for very small matrix.
+     */
     void print(int pi, int pj, char* cname, size_t cnamemax) {
         int izero = 0, ione = 1, isix = 6;
         std::vector<double> work(aq);
@@ -112,6 +115,8 @@ struct scalapack_distributed_matrix {
             &izero, &izero, cname, &isix, &work[0], clen);
     }
     
+    /** Output the matrix to a text file
+     */
     void write(std::string filename, int pi, int pj) {
         int izero = 0, ione = 1;
         std::vector<double> work(mb);
@@ -179,6 +184,35 @@ struct scalapack_distributed_matrix {
         if (global2local(gi, gj, li, lj)) {
             A[li+lj*ap] += a;
         }
+    }
+    
+    /** Aggregate the diagonal entries on each processor.
+     * @param diag
+     *   the output vector of diagonal entries, valid on each processor.
+     *   a vector of length n.
+     * 
+     * This routine needs ~2*aq work on each processor.
+     */
+    void diagonals(double *diag) {
+        int izero=0,ione=1;
+        int gi, gj;
+        std::vector<double> ldiag(aq,0.);
+        for (int i=0; i<ap; ++i) {
+            for (int j=0; j<aq; ++j) {
+                local2global(i, j, gi, gj);
+                if (gi==gj) {
+                    ldiag[j] = A[i+j*ap];
+                }
+            }
+        }
+        
+        Cdgsum2d(ictxt, "Columnwise", " ", 
+          1, aq, &ldiag[0], 1, -1, mycol);
+          
+        int lwork = numroc_(&n, &nb, &izero, &izero, &npcol);
+        std::vector<double> work(lwork,0.);
+        pdlared1d_( &n, &ione, &ione, desc, &ldiag[0], diag,
+            &work[0], &lwork);
     }
     
     
@@ -343,6 +377,35 @@ struct scalapack_distributed_matrix {
             }
         }
     }
+    
+    /** Scale the column of a distributed matrix by the inverse of a vector.
+     * For each column A(:,i), this function sets
+     *   A(:,i) <- alpha*A(:,i)*1/s(i)
+     * where s(i) is the ith entry in the column scaling
+     * vector.  This vector must be available on all
+     * processors currently.  If abs(s(i)) < tol, then 1./s(i) is
+     * taken as 0.
+     * 
+     * @param s the vector of scaling factors.  s must be an array
+     * of length n (the number of columns) and must be available
+     * on all processors.
+     * @param alpha an additional scaling factor
+     * @param tol the tolerance for detecting a zero element.
+     */
+    void pseudoinverse_scale_columns(double *s, double alpha, double tol) {
+        int gi, gj;
+        for (int i=0; i<ap; ++i) {
+            for (int j=0; j<aq; ++j) {
+                local2global(i, j, gi, gj);
+                if (fabs(s[gj]) >= tol) {
+                    A[i+j*ap] *= alpha*(1/s[gj]);
+                } else {
+                    A[i+j*ap] = 0;
+                }
+            }
+        }
+    }
+    
     
     /** Scale the rows of a distributed matrix.
      * For each row A(i,:), this function sets
@@ -696,6 +759,51 @@ struct scalapack_symmetric_eigen {
             
         
         resids.column_norms(residnorms);
+    }
+    
+    /** Compute the pseudo-inverse in eigenvector working memory.
+     * 
+     * This computes
+     *   pinv(A) = V*pinv(Lambda)*V'
+     * in extra working memory used to compute the eigenvectors of
+     * A.  This matrix must be re-copied to be persistent.
+     * 
+     * The numerical threshold for the pseudo-inverse is sqrt(n)*2.2*10^{-16}
+     * 
+     * This function requires twice the memory of A in working memory.
+     */
+    void pseudoinverse(scalapack_distributed_matrix& P) {
+        double done = 1., dzero = 0.;
+        int ione=1;
+        // repurpose lwork
+        assert(lwork >= 2*A.ap*A.aq);
+        
+        scalapack_distributed_matrix T; // allocate a temp matrix
+        P.init(ictxt, n, n, A.nb, A.nb);
+        T.init(ictxt, n, n, A.nb, A.nb);
+        P.A = work;
+        T.A = work + A.ap*A.aq;
+        
+        // find the largest eigenvalue value of A
+        double sigmamax = values[0];
+        for (int i=1; i<A.n; ++i) {
+            if (fabs(values[i]) > sigmamax) {
+                sigmamax = fabs(values[i]);
+            } 
+        }
+        // set the pinv tolerance
+        double tol = (double)A.n*2.2e-16*sigmamax;
+        
+        // compute V*pinv(Lambda)
+        memcpy(T.A, Z.A, sizeof(double)*Z.ap*Z.aq);
+        T.pseudoinverse_scale_columns(values, 1.0, tol);
+        // compute V*pinv(Lambda)*V'
+        pdgemm_("N", "T", 
+            &n, &n, &n, &done,
+            T.A, &ione, &ione, T.desc,
+            Z.A, &ione, &ione, Z.desc,
+            &dzero,
+            work, &ione, &ione, P.desc);
     }
     
     /** Compute the residuals for the eigenvectors 

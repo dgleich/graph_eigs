@@ -9,6 +9,7 @@ The main driver for computing graph eigenvalues with python and scipy.
 History
 -------
 :2010-11-02: Initial coding
+:2011-02-15: Added commute time checking
 """
 
 __author__ = 'David F. Gleich'
@@ -24,6 +25,16 @@ import scipy.linalg
 
 import simple_graph
 import scipy_wrap
+
+def read_scalapack_matrix(fn):
+    d = numpy.loadtxt(fn,skiprows=1,
+            converters={0: lambda x: x.replace('D','e')})
+    f = open(fn,'rt')
+    header = f.readline()
+    f.close()
+    size = header.split()
+    d = d.reshape((int(size[0]), int(size[1])))
+    return d
 
 
 def resid_func(resids,f):
@@ -127,6 +138,19 @@ def markov_matrix(graph):
     return M    
     
 
+def commute_time(graph):
+    """
+    @param graph the raw graph data.
+    """
+    L = laplacian_matrix(graph)
+    C = scipy.linalg.pinv2(L)
+    d = C.diagonal()
+    # TODO find a better way to do this
+    for i in xrange(C.shape[0]):
+        for j in xrange(C.shape[1]):
+            C[i,j] = d[i] + d[j] - 2*C[i,j]
+            if i==j: C[i,j] = 0.
+    return C
 
 def setup_command_line_options():
     usage = "python %prog [options] graphfile"
@@ -205,6 +229,8 @@ def setup_command_line_options():
         help="Filename of iparscores file to check.")
     g.add_option('--check-resids',default=None,metavar="FILE",
         help="Filename of resids file to check.")
+    g.add_option('--check-commute-all',default=None,metavar="FILE",
+        help="Filename of all commute times file to check.")
     parser.add_option_group(g)
   
     return parser
@@ -229,6 +255,10 @@ def in_check_mode(opts):
     if opts.check_eigs is not None:
         return True
     if opts.check_ipar is not None:
+        return True
+    if opts.check_resids is not None:
+        return True
+    if opts.check_commute_all is not None:
         return True
     return False
     
@@ -262,6 +292,7 @@ def participation_ratios(Q):
         
     
 def compare_eigs(v1,v2):
+    ndiff = 0
     assert(v1.size == v2.size)
     v1 = v1.copy()
     v2 = v2.copy()
@@ -274,12 +305,7 @@ def compare_eigs(v1,v2):
                 ev1,v2[i])
             ndiff += 1
         
-    
-    if ndiff > 0:
-        print >>sys.stderr, "%i eigenvalues differ"%(ndiff)
-        return False
-    else:
-        return True
+    return ndiff
     
     
 """ Compare two different sets of computed eigenvalues. """    
@@ -288,12 +314,19 @@ def check_eigs(opts,v):
     if opts.check_eigs is not None:
         myeigs = v
         fileeigs = numpy.loadtxt(opts.check_eigs)
-        compare_eigs(myeigs, fileeigs)
+        ndiff = compare_eigs(myeigs, fileeigs)
+        if ndiff > 0:
+            print "eigenvalues: %s ; warning %i values differ"%(
+                opts.check_eigs, ndiff)
+        else:
+            print "eigenvalues: %s ; okay"%(opts.check_eigs)
         
 def compare_resids(r1,r2,v):
     """ This functiona ssumes that r1 and r2 are sorted the same. 
     This is used to check relative residuals.
     """
+    
+    rval = True
     
     for i,ri in enumerate(r1):
         if abs(ri)/abs(v[i] + 1.) <  10*2.2e-16*len(r1):
@@ -304,6 +337,9 @@ def compare_resids(r1,r2,v):
             else:
                 print >>sys.stderr, "resid %i is larger than expected, relerr is %.18e\n"%(
                     i, abs(r2[i])/abs(v[i]+1.))
+                rval = False
+    
+    return rval
                     
 """ The current comparison algorithm is very simple and not yet robust.
 
@@ -314,17 +350,50 @@ which we don't yet check.
     
 def compare_ipars(ipar1,ipar2,v):
     assert(ipar1.size == ipar2.size == v.size)
+    rval = True
     
     if (abs(ipar1[0] - ipar2[0])/abs(ipar1[0])) > 1e-10:
         print >>sys.stderr, "ipar[0] %.18e and %.18e are too different"%(
                 ipar1[0],ipar2[0])
+        rval = False
                 
     if (abs(ipar1[-1] - ipar2[-1])/abs(ipar1[-1])) > 1e-10:
         print >>sys.stderr, "ipar[0] %.18e and %.18e are too different"%(
                 ipar1[-1],ipar2[-1])
+        rval = False
                 
      
-    return True
+    return rval
+    
+def compare_commute_all(C,F):
+    """ Compare commute times computed locally to those in a file. """
+    assert( F.shape[0] == C.shape[0] )
+    assert( F.shape[1] == F.shape[1] )
+    assert( F.shape[0] == F.shape[1] ) # make sure it's square
+    
+    rval = True
+    n = float(F.shape[0])
+    for i in xrange(F.shape[0]):
+        for j in xrange(F.shape[1]):
+            assert(F[i,j] >= 0.) # must be non-negative
+            d = abs(C[i,j] - F[i,j])/abs(C[i,j])
+            if d > 10*2.2e-16*n:
+                print >>sys.stderr, ("Commute time %i, %i "%(i,j) +
+                    "is different, reldiff=%.18e, file=%.18e, numpy=%.18e"%(
+                    d, F[i,j], C[i,j]))
+                rval = False
+                    
+    return rval 
+                
+    
+def check_commute(g,opts):
+    if opts.check_commute_all is not None:
+        C = commute_time(g)
+        F = read_scalapack_matrix(opts.check_commute_all)
+        if compare_commute_all(C,F):
+            print "commute times: %s ; okay"%(opts.check_commute_all)
+        else:
+            print "commute times: %s ; warnings"%(opts.check_commute_all)
     
     
 """ Compare properties of two sets of eigenvectors. """
@@ -336,13 +405,18 @@ def check_evecs(g,opts,Q,v):
         # the only thing to check on residuals is that they aren't too large
         myresids = eigenvalue_residuals(g,opts.type,Q,v)
         fileresids = numpy.loadtxt(opts.check_resids)
-        compare_resids(myresids, fileresids, v)
+        if compare_resids(myresids, fileresids, v):
+            print "residuals: %s ; okay"%(opts.check_resids)
+        else:
+            print "residuals: %s ; warnings"%(opts.check_resids)
 
     if opts.check_ipar is not None:
         myipars = participation_ratios(Q)
         fileipars = numpy.loadtxt(opts.check_ipar)
-        compare_ipars(myipars, fileipars, v);
-    
+        if compare_ipars(myipars, fileipars, v):
+            print "ipar scores: %s ; okay"%(opts.check_ipar)
+        else:
+            print "ipar scores: %s ; warnings"%(opts.check_ipar)
 
 def main():
     parser = setup_command_line_options()
@@ -358,7 +432,7 @@ def main():
     check_mode = in_check_mode(opts)
     if check_mode:
         opts.verbose = False
-        if opts.check_ipar is not None:
+        if opts.check_ipar or opts.check_commute_all is not None:
             opts.evecs = True
     
     if opts.verbose: print_options(opts)
@@ -401,6 +475,8 @@ def main():
         Q = matrix_types[opts.type]['evecs_post'](g, Q)
         if check_mode: 
             check_evecs(g, opts, Q, v)
+            if opts.type == 'laplacian':
+                check_commute(g, opts)
             return
         if opts.evals is not False:
             vprint("Writing eigenvalues : %s"%(opts.output))

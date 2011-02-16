@@ -111,7 +111,8 @@ void usage() {
     "      the eigenvectors are computed)\n"
     "\n"
     "The following option controls the eigensolver used.\n"
-    "  --solver 
+    "  --solver qr\n"
+    "  --solver mrrr\n"
     "\n";
     fprintf(stderr, "%s", usage);
 }
@@ -166,6 +167,7 @@ struct graph_eigs_options {
     std::string commute_small_scores_filename;
     std::string commute_large_scores_filename;
     std::string commute_deviation_filename;
+    std::string commute_all_filename;
     
     std::string fiedler_vector_filename;
     
@@ -195,9 +197,9 @@ struct graph_eigs_options {
     
     bool set_driver_type_from_string(const char *string) {
         if (strcmp("qr",string)==0) 
-            driver = qr;
+            solver = qr;
         else if (strcmp("mrrr",string)==0) 
-            driver = mrrr;
+            solver = mrrr;
         else
             return false;
         return true;
@@ -286,7 +288,7 @@ struct graph_eigs_options {
         }
         
         if ((matrix == normalized_laplacian_matrix ||
-             matrix == laplacian_matrix) && fiedler && vectors) {
+             matrix == laplacian_matrix) && fiedler && eigenvectors) {
             if (_check_filename(fiedler_vector_filename) == false) {
                 printf("Cannot access %s to write Fiedler vector\n",
                     fiedler_vector_filename.c_str());
@@ -294,7 +296,7 @@ struct graph_eigs_options {
             }
         }
         
-        if (matrix == laplacian_matrix && commute && vectors) {
+        if (matrix == laplacian_matrix && commute && eigenvectors) {
             if (_check_filename(commute_deviation_filename) == false) {
                 printf("Cannot access %s to write commute-time deviation scores\n",
                     commute_deviation_filename.c_str());
@@ -310,6 +312,12 @@ struct graph_eigs_options {
             if (_check_filename(commute_small_scores_filename) == false) {
                 printf("Cannot access %s to write small commute-times\n",
                     commute_small_scores_filename.c_str());
+                return false;
+            }
+            
+            if (_check_filename(commute_all_filename) == false) {
+                printf("Cannot access %s to write all commute-times\n",
+                    commute_all_filename.c_str());
                 return false;
             }
         }
@@ -354,14 +362,15 @@ struct graph_eigs_options {
         }
         
         if ((matrix == normalized_laplacian_matrix ||
-             matrix == laplacian_matrix) && fiedler && vectors) {
+             matrix == laplacian_matrix) && fiedler && eigenvectors) {
             fiedler_vector_filename = output_name + ".fiedler";
         }
         
-        if (matrix == laplacian_matrix && commute && vectors) {
+        if (matrix == laplacian_matrix && commute && eigenvectors) {
             commute_deviation_filename = output_name + ".commute_dev";
             commute_large_scores_filename = output_name + ".commute_large";
             commute_small_scores_filename = output_name + ".commute_small";
+            commute_all_filename = output_name + ".ctimes";
         }
         
         if (eigenvalues && values_filename.size() == 0) {
@@ -393,8 +402,9 @@ struct graph_eigs_options {
      * This does NOT distribute filenames.
      */
     void distribute() {    
-        int header[11]={verbose, tridiag, residuals, iparscores, vectors,
-                eigenvalues, eigenvectors, matrix, nb, minmemory, markov};
+        int header[13]={verbose, tridiag, residuals, iparscores, vectors,
+                eigenvalues, eigenvectors, matrix, nb, minmemory, markov, 
+                fiedler, commute};
         MPI_Bcast(header, sizeof(header)/sizeof(int), MPI_INT, 0, MPI_COMM_WORLD);
         verbose = header[0];
         tridiag = header[1];
@@ -407,6 +417,8 @@ struct graph_eigs_options {
         nb = header[8];
         minmemory = header[9];
         markov = header[10];
+        fiedler = header[11];
+        commute = header[12];
     }
     
     
@@ -524,8 +536,8 @@ bool parse_command_line_arguments(int argc, char **argv) {
                         opts.vectors_filename = std::string(optarg);
                     }
                 } else if (strcmp("solver",long_options[longindex].name)==0) {
-                    if (!opts.set_driver_type_from_string(optarg.c_str())) {
-                        printf("Invalid solver type: %s\n");
+                    if (!opts.set_driver_type_from_string(optarg)) {
+                        printf("Invalid solver type: %s\n", optarg);
                         return false;
                     }
                 }

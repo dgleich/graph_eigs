@@ -415,6 +415,36 @@ void find_large_residuals(std::vector<double>& resids, double *scale, double tol
     }
 }
 
+/** Compute and output data on commute times.
+ * 
+ * This uses extra work memory used for computing the eigenvalues.
+ * 
+ */
+template <typename EigenSolver>
+void compute_commute_times(scalapack_distributed_matrix& A, EigenSolver &P) {
+            
+    scalapack_distributed_matrix C;
+    tlist.start_event("commute");
+    P.pseudoinverse(C); // compute the pseudo-inverse
+    std::vector<double> diags(A.n,0.);
+    C.diagonals(&diags[0]);
+    
+    int gi, gj;
+    for (int j=0; j<C.aq; ++j) {
+        for (int i=0; i<C.ap; ++i) {
+            C.local2global(i, j, gi, gj);
+            // compute the commute times
+            C.A[i+j*C.ap] = diags[gi] + diags[gj] - 2*C.A[i+j*C.ap];
+            if (gi==gj) {
+                C.A[i+j*C.ap] = 0.;
+            }
+        }
+    }
+    tlist.report_event(6);
+    
+    C.write(opts.commute_all_filename.c_str(), 0, 0);
+}    
+
 /** Compute data on the Markov matrix from the normalized Laplacian.
  * For an undirected graph, the eigenvalues and vectors of the 
  * Markov chain transition matrix can be computed via the eigenvalues
@@ -505,7 +535,11 @@ void output_markov_data(triplet_data& g,
 }   
 
 template <typename EigenSolver>
-int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A) {
+int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A) 
+{
+    int nprow, npcol, myrow, mycol;
+    int n = A.n;
+    Cblacs_gridinfo(A.ictxt, &nprow, &npcol, &myrow, &mycol);
     
     EigenSolver P(A);
     
@@ -575,12 +609,13 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A) {
                 //write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
             }
             
-            if (opts.fiedler) {
+            /*if (opts.fiedler) {
                 std::vector<double> fiedler;
-                find_fiedler(P.values, P.Z, fiedler);
+                //find_fiedler(P.values, P.Z, fiedler);
                 write_data_safely("fiedler", "f", 2,
-                    opts.fiedler_filename.c_str(),  &fiedler[0], n, 1, false);
-            }
+                    opts.fiedler_vector_filename.c_str(),  
+                    &fiedler[0], n, 1, false);
+            }*/
 
             if (opts.residuals) {
                 std::vector<double> resids;
@@ -591,7 +626,8 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A) {
                 
                 if (root) {
                     write_data_safely("residuals", "r", 2,
-                        opts.residuals_filename.c_str(), &resids[0], n, 1, false);
+                        opts.residuals_filename.c_str(), 
+                        &resids[0], n, 1, false);
                 }
                 
                 if (root) {
@@ -611,13 +647,21 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A) {
                         opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
                 }
             }
+            
+            if (opts.matrix == opts.laplacian_matrix && opts.commute) {
+                compute_commute_times(A, P);
+            }
         }
         
         // handle Markov matrix
         if (opts.matrix == opts.normalized_laplacian_matrix && opts.markov) {
             output_markov_data(g, A, P);
         }
+        
+        // 
     }
+    
+    return 0;
 } 
 
 int main_blacs(int argc, char **argv, int nprow, int npcol) 
