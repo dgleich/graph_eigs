@@ -16,7 +16,7 @@ PSTEGR_SRC := disnan.o   dlar1v.o  dlarrb2.o  dlarrc.o   dlarrd.o    \
 PSTEGR_DIR := pdsyevr/pstegr
 PSTEGR := $(addprefix $(PSTEGR_DIR)/,$(PSTEGR_SRC))
 
-all : lapeigs graph_eigs
+all : lapeigs graph_eigs identical_nodes
 
 .PHONY : clean test clean_test
 
@@ -28,10 +28,24 @@ graph_eigs.o : graph_eigs_opts.hpp triplet_graph.hpp scalapack_symmetric_eigen.c
 
 graph_eigs : graph_eigs.o mpiutil.o pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o pdsyev_tri.o $(PSTEGR) 
 
+identical_nodes.o : triplet_graph.hpp
+
+identical_nodes : identical_nodes.o 
+
 clean:
 	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)  pdlawrite.o
 	
 clean_test:
+	rm -rf test/*.inodes
+
+identical_nodes_test: identical_nodes
+	rm -rf test/*.inodes
+	./identical_nodes test/inodes_test1.smat
+	diff test/inodes_test1.smat.inodes test/inodes_test1.correct
+	./identical_nodes test/inodes_test2.smat
+	diff test/inodes_test2.smat.inodes test/inodes_test2.correct
+	./identical_nodes test/inodes_test3.smat test/inodes_test_three.smat.inodes
+	diff test/inodes_test_three.smat.inodes test/inodes_test3.correct 
 	
 	
 test_tapir:	 graph_eigs
@@ -72,6 +86,6 @@ test_Caltech: graph_eigs
 	
 
 
-test: graph_eigs clean_test test_tapir test_polblogs test_Caltech
+test: graph_eigs clean_test test_tapir test_polblogs test_Caltech identical_nodes_test
 
 	

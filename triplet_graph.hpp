@@ -18,7 +18,6 @@
  * 
  * main:triple_data g;
  * main:g.read_smat("myfile.smat");
- * main:g.distribute_data();
  */
 struct triplet_data {
     int *r;
