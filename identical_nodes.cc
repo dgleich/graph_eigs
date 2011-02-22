@@ -104,12 +104,10 @@ struct identical_node_finder {
     };
     
     void _sort_indices() {
-        printf("Sorting indices...\n");
         if (sorted_indices.size() > 0) {
             // we've already sorted
             return;    
         }
-        printf("Sorting indices...\n");
         
         sorted_indices.resize(nnodes);
         for (vertex_index i=0; i<nnodes; ++i) {
@@ -117,8 +115,6 @@ struct identical_node_finder {
         }
         std::sort(sorted_indices.begin(), sorted_indices.end(),
             graycode_sorter(*this));
-            
-        printf("Done\n");
     }
     
     bool _is_equal(vertex_index i, vertex_index j) {
