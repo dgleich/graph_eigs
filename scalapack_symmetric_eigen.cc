@@ -20,11 +20,15 @@
  * :2010-11-08: Initial version
  * :2010-11-09: Added residuals
  * :2010-11-10: Added initial tridiagonal reduction
+ * :2011-02-15: Added diagonal elements
+ * :2011-03-04: Added element iterator
  */
 
 #include <blas.h>
 #include <blacs.h>
 #include <scalapack.h>
+
+#include <vector>
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +56,8 @@ extern void pdsyev_tri_( char* jobc, char *jobz, char *uplo, int *n,
 #ifdef __cplusplus
 };
 #endif
+
+struct scalapack_distributed_matrix_element_iterator;
 
 struct scalapack_distributed_matrix {
     int ictxt;
@@ -117,14 +123,7 @@ struct scalapack_distributed_matrix {
     
     /** Output the matrix to a text file
      */
-    void write(std::string filename, int pi, int pj) {
-        int izero = 0, ione = 1;
-        std::vector<double> work(mb);
-        const char *fnstr = filename.c_str();
-        int fnlen = filename.size();
-        pdlawrite_(fnstr, &m, &n, A, &ione, &ione, desc,
-            &izero, &izero, &work[0], fnlen);
-    }
+    void write(std::string filename, int pi, int pj); 
     
     /** All processors set all of their entries to a constant. */
     void set_to_constant(double a) {
@@ -429,6 +428,187 @@ struct scalapack_distributed_matrix {
         }
     }
 };
+
+
+/** An iterator to stream over the elements of distributed matrix.  
+ * 
+ * The iterator returns elements in column-major order.
+ * 
+ * Usage:
+ *   scalapack_distributed_matrix A;
+ *   scalapack_distributed_matrix_element_iterator iter(A)
+ *   while (iter.next()) {
+ *     int istart = iter.istart; 
+ *     int jstart = iter.jstart;
+ *     int isize = iter.isize;
+ *     int jsize = iter.jsize;
+ *     for (int j=0; j<jsize; ++j) {
+ *       for (int i=0; i<isize; ++i) {
+ *        if (iter.root)    // elements only valid on the root proc
+ *          iter.elem(i, j) // return istart+i, jstart+j in the global matrix
+ *     }
+ *   }
+ */
+struct scalapack_distributed_matrix_element_iterator {
+    bool done;
+    bool first;
+    bool root;
+    std::vector<double> work;
+    int lwork;
+    int ia, ja; // the starting element index (1-based)
+    int pi, pj; // the aggregating processor id
+    int istart, jstart;
+    int isize, jsize;
+    int mm, nn, mb, nb, ldd, desc[9]; // describes of the local memory block
+    int m, n; // describes the matrix A
+    double *A;
+    int *Adesc;
+    
+    /** 
+     * @param A the distributed matrix
+     * @param ia the 1-based starting row index
+     * @param ja the 1-based starting column index
+     * @param worksize the number of elements to allocate for
+     * temporary work.  If this parameter is smaller than 
+     * A.mb, then worksize is equal to the size A.mb, which is
+     * the minimum possible worksize.
+     * @param pi the rowid of the processor that gets the elemnets
+     * @param pj the colid of the processor that gets the elements
+     */
+    scalapack_distributed_matrix_element_iterator(
+        scalapack_distributed_matrix& A_, 
+        int ia_=1, int ja_=1,
+        int worksize=0,
+        int pi_=0, int pj_=0) 
+    : work(0), ia(ia_), ja(ja_), pi(pi_), pj(pj_), 
+      m(A_.m), n(A_.n), A(A_.A), Adesc(A_.desc)
+    {
+        // set root
+        root = (pi == A_.myrow && pj == A_.mycol);
+        // determine worksize
+        lwork = (size_t) std::max(worksize, A_.mb);
+        work.resize(lwork);
+        
+        // TODO remove these restrictions
+        assert(ia == 1);
+        assert(ja == 1);
+        
+        mm = std::max(1, std::min(m, lwork));
+        nn = std::max(1, lwork/mm);
+        mb = mm;
+        nb = nn;
+        ldd = std::max(1,mm);
+        descset_(desc, &mm, &nn, &mb, &nb, 
+            &pi, &pj, &A_.ictxt, &ldd);
+            
+        reset();
+    }
+    
+    /** Fetch the next set of values.
+     * After this function returns, the values:
+     *   istart, jstart, isize, jsize, and work 
+     * can all be accessed.
+     * If root is true, then the element function works as well.
+     * @return false when the iterator is done.
+     */
+    bool next() {
+        // check for already done
+        if (done) { return false; }
+        if (!first) {
+            // increment to next istart, jstart
+            istart += mm;
+            if (istart > ia + m - 1) {
+                istart = ia;
+                jstart += nn;
+                if (jstart > ja + n - 1) {
+                    done = true;
+                    return false;
+                }
+            }
+            // this iterator tries to implement the for loop
+            // for (int jstart = ja; jstart <= ja + n - 1; jstart += nn) {
+            //   for (int istart = ia; istart <= ia + m - 1; istart += mm) {
+        } else {
+            // need to check to make sure the matrix isn't empty
+            if (m == 0 || n == 0) { 
+                done=true; 
+                return false;
+            }
+            first = false;
+        }
+        // we load columns jstart to jend
+        int jend = std::min(ja + n - 1, jstart + nn -1);
+        jsize = jend - jstart + 1;
+        int iend = std::min(ia + m - 1, istart + mm - 1);
+        isize = iend - istart + 1;
+        double alpha = 1., beta = 0.;
+        int ione = 1;
+        pdgeadd_("N",&isize, &jsize, &alpha, A, &istart, &jstart,
+                    Adesc, &beta, &work[0], &ione, &ione, desc);
+        
+        return true;
+    }
+    
+    void print() {
+        printf("Current iterator state:\n");
+        printf("isize = %i\n", isize);
+        printf("jsize = %i\n", jsize);
+        printf("istart = %i\n", istart);
+        printf("jstart = %i\n", jstart);
+        printf("first = %i\n", (int)first);
+        printf("done = %i\n", (int)done);
+    }
+    
+    void reset() {
+        done = false;
+        first = true;
+        istart = ia;
+        jstart = ja;
+    }
+    
+    double element(int i, int j) {
+        return work[i + j*ldd];
+    }
+};
+
+void scalapack_distributed_matrix::write(std::string filename, int pi, int pj) {
+    /*int izero = 0, ione = 1;
+    std::vector<double> work(mb);
+    const char *fnstr = filename.c_str();
+    int fnlen = filename.size();
+    pdlawrite_(fnstr, &m, &n, A, &ione, &ione, desc,
+        &izero, &izero, &work[0], fnlen);*/
+    
+    scalapack_distributed_matrix_element_iterator iter(*this,
+        1, 1, 0, pi, pj);    
+        
+    const char *fnstr = filename.c_str();
+    FILE *outf = NULL;
+    if (iter.root) {
+        outf = fopen(fnstr, "wt");
+        if (!outf) {
+            // TODO report error
+            fprintf(stderr, "Error: cannot open %s for writing\n", fnstr);
+            return;
+        }
+        fprintf(outf, "%i %i\n", m, n);
+    }
+    
+    while (iter.next()) {
+        if (iter.root) {
+            for (int j=0; j<iter.jsize; ++j) {
+                for (int i=0; i<iter.isize; ++i) {
+                    fprintf(outf, "%.18e\n", iter.element(i,j));
+                }
+            }
+        }
+    }
+    if (iter.root) {
+        fclose(outf);
+    } else {
+        assert(outf == NULL);
+    }
+}    
 
 struct scalapack_symmetric_eigen {
     int ictxt;

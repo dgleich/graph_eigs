@@ -57,7 +57,16 @@ $(eval $(call TEST_template,tapir,mpirun -np 4))
 $(eval $(call TEST_template,polblogs-sym-cc,))
 $(eval $(call TEST_template,Caltech36,mpirun -np 4))
 
-test: test_tiny test_karate
+test/element_iterator.o: scalapack_symmetric_eigen.cc
+test/element_iterator: test/element_iterator.o 
+
+test_element_iterator: test/element_iterator
+	mpirun -np 4 test/element_iterator 
+
+all_tests_clean += test/element_iterator
+all_tests += test_element_iterator
+
+test: test_tiny test_karate test_element_iterator
 
 all_tests: $(all_tests)
 

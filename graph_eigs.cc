@@ -781,7 +781,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         tlist.report_event(2);
     }
     if (root) { printf("\n"); }
-    
+        
     main_compute<scalapack_symmetric_eigen>(root, g, A);
     
     if (root) {

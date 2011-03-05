@@ -4,3 +4,5 @@ lapeigs
 PDSYEVRnew*
 *.pyc
 test.*
+test/element_iterator
+
