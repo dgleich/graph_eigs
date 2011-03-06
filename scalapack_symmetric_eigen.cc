@@ -543,7 +543,7 @@ struct scalapack_distributed_matrix_element_iterator {
         isize = iend - istart + 1;
         double alpha = 1., beta = 0.;
         int ione = 1;
-        pdgeadd_("N",&isize, &jsize, &alpha, A, &istart, &jstart,
+        pdgeadd_("N", &isize, &jsize, &alpha, A, &istart, &jstart,
                     Adesc, &beta, &work[0], &ione, &ione, desc);
         
         return true;
@@ -623,6 +623,7 @@ struct scalapack_symmetric_eigen {
     bool vectors;
     bool minmemory;
     bool tridiag;
+    bool extra_func_mem;
     
     bool myZ;
     scalapack_distributed_matrix Z;
@@ -651,11 +652,14 @@ struct scalapack_symmetric_eigen {
     /** Pick which type of problem to solve.
      * If you want to use your own matrix for eigenvectors,
      * it must have already been set at this point.
+     * @param extra_ is required to be true to compute pseudo-inverses
+     *   and functions of the matrix
      */
-    void setup(bool vectors_, bool minmemory_, bool tridiag_) {
+    void setup(bool vectors_, bool minmemory_, bool tridiag_, bool extra_) {
         vectors = vectors_;
         minmemory = minmemory_;
         tridiag = tridiag_;
+        extra_func_mem = extra_;
         
         if (vectors && myZ) {
             Z.init(ictxt, n, n, A.nb, A.nb);
@@ -777,7 +781,11 @@ struct scalapack_symmetric_eigen {
             if (n % (nprow*npcol) != 0) {
                 nz += 1;
             }
-            return 5 + 5*n + nextra + (2 + nz)*nn;
+            if (extra_func_mem) {
+                return std::max(5 + 5*n + nextra + (2 + nz)*nn, 2*np0*mq0);
+            } else {
+                return 5 + 5*n + nextra + (2 + nz)*nn;
+            }
         } else {            
             int nextra = 12*nn;
             if ((nb * (np0 + 1)) > nextra) {

@@ -231,6 +231,10 @@ def setup_command_line_options():
         help="Filename of resids file to check.")
     g.add_option('--check-commute-all',default=None,metavar="FILE",
         help="Filename of all commute times file to check.")
+    g.add_option('--check-commute-scores-small',default=None,metavar="FILE",
+        help="Filename of small commute times file to check.")
+    g.add_option('--check-commute-scores-large',default=None,metavar="FILE",
+        help="Filename of large commute times file to check.")
     parser.add_option_group(g)
   
     return parser
@@ -365,6 +369,49 @@ def compare_ipars(ipar1,ipar2,v):
      
     return rval
     
+    
+def compare_commute_scores(F,X,cset):
+    """ Compare top-k commute times computed locally to those in a files.
+    
+    @param cset is 'large' for the largest commute times and 'small' for
+    the smallest
+    """
+    n = F.shape[0]
+    # first index the edges in X
+    adj = [ [] for _ in xrange(F.shape[0]) ]
+    for i,j,v in X:
+        adj[j].append((i,v))
+    
+    rval = True
+    for j in xrange(F.shape[1]):
+        x = F[:,j]
+        order = numpy.argsort(x)        
+        fileset = adj[j]
+        if cset=='small':
+            myset = order[0:len(fileset)]
+            myset = numpy.flipud(myset)
+        else:
+            myset = order[-len(fileset):]
+            myset = numpy.flipud(myset)
+        # compare the two sets
+        for ei,nz in enumerate(fileset):
+            i = nz[0]
+            v = nz[1]
+            diff = False
+            d = abs(x[myset[ei]] - v)/abs(v)
+            # this function can't check the set elements because
+            # of the issue with ties or near ties
+            if d > 10*2.2e-16*n:
+                diff = True
+            if diff:
+                print >>sys.stderr, ("Commute score difference: " +
+                    "%ith %sest in column %i: file=%i numpy=%i reldiff=%.18e"%(
+                    ei, cset, j, i, myset[ei], d))
+                rval = False
+                break
+    return rval
+        
+    
 def compare_commute_all(C,F):
     """ Compare commute times computed locally to those in a file. """
     assert( F.shape[0] == C.shape[0] )
@@ -387,13 +434,35 @@ def compare_commute_all(C,F):
                 
     
 def check_commute(g,opts):
-    if opts.check_commute_all is not None:
+    if opts.check_commute_all is not None or \
+       opts.check_commute_scores_large is not None or \
+       opts.check_commute_scores_small is not None:
         C = commute_time(g)
-        F = read_scalapack_matrix(opts.check_commute_all)
-        if compare_commute_all(C,F):
-            print "commute times: %s ; okay"%(opts.check_commute_all)
-        else:
-            print "commute times: %s ; warnings"%(opts.check_commute_all)
+
+        if opts.check_commute_all is not None:
+            F = read_scalapack_matrix(opts.check_commute_all)
+            if compare_commute_all(C,F):
+                print "commute times: %s ; okay"%(opts.check_commute_all)
+            else:
+                print "commute times: %s ; warnings"%(opts.check_commute_all)
+                
+        if opts.check_commute_scores_large is not None:
+            X = simple_graph.read_smat_triples(opts.check_commute_scores_large)
+            if compare_commute_scores(C,X,'large'):
+                print "commute scores (large): %s ; okay"%(
+                    opts.check_commute_scores_large)
+            else:
+                print "commute scores (large): %s ; warnings"%(
+                    opts.check_commute_scores_large)
+                    
+        if opts.check_commute_scores_small is not None:
+            X = simple_graph.read_smat_triples(opts.check_commute_scores_small)
+            if compare_commute_scores(C,X,'small'):
+                print "commute scores (small): %s ; okay"%(
+                    opts.check_commute_scores_small)
+            else:
+                print "commute scores (small): %s ; warnings"%(
+                    opts.check_commute_scores_small)
     
     
 """ Compare properties of two sets of eigenvectors. """

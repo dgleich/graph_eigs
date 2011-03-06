@@ -38,8 +38,14 @@ test_$(1) : graph_eigs
 	rm -rf test/$(1).smat.*
 	$(2) ./graph_eigs test/$(1).smat -a -r -p > /dev/null
 	python graph_eigs.py test/$(1).smat -a --check-eigs test/$(1).smat.adjacency.eigs --check-ipar test/$(1).smat.adjacency.ipar --check-resids test/$(1).smat.adjacency.resids
-	$(2) ./graph_eigs test/$(1).smat -l -r -p > /dev/null
-	python graph_eigs.py test/$(1).smat -l --check-eigs test/$(1).smat.laplacian.eigs --check-ipar test/$(1).smat.laplacian.ipar --check-resids test/$(1).smat.laplacian.resids --check-commute-all test/$(1).smat.laplacian.ctimes
+	$(2) ./graph_eigs test/$(1).smat -l -r -p --commute-all > /dev/null
+	python graph_eigs.py test/$(1).smat -l \
+	    --check-eigs test/$(1).smat.laplacian.eigs \
+	    --check-ipar test/$(1).smat.laplacian.ipar \
+	    --check-resids test/$(1).smat.laplacian.resids \
+	    --check-commute-all test/$(1).smat.laplacian.ctimes \
+	    --check-commute-scores-small test/$(1).smat.laplacian.commute-small \
+	    --check-commute-scores-large test/$(1).smat.laplacian.commute-large
 	$(2) ./graph_eigs test/$(1).smat -n -r -p > /dev/null
 	python graph_eigs.py test/$(1).smat -n --check-eigs test/$(1).smat.normalized.eigs --check-ipar test/$(1).smat.normalized.ipar --check-resids test/$(1).smat.normalized.resids
 	python graph_eigs.py test/$(1).smat --type=markov --check-eigs test/$(1).smat.normalized-markov.eigs --check-ipar test/$(1).smat.normalized-markov.ipar
@@ -61,7 +67,7 @@ test/element_iterator.o: scalapack_symmetric_eigen.cc
 test/element_iterator: test/element_iterator.o 
 
 test_element_iterator: test/element_iterator
-	mpirun -np 4 test/element_iterator 
+	mpirun -np 4 test/element_iterator > /dev/null
 
 all_tests_clean += test/element_iterator
 all_tests += test_element_iterator

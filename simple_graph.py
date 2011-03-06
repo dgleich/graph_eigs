@@ -102,6 +102,23 @@ def read_smat(filename):
         adj[i].append(j)
     return Graph(m, adj)
     
+def read_smat_triples(filename):
+    file = open(filename,'rt')
+    header = file.readline()
+    parts = header.split()
+    m = int(parts[0])
+    n = int(parts[1])
+    nz = int(parts[2])
+    edges = []
+    for line in file:
+        parts = line.split()
+        if len(parts)==0: continue
+        i = int(parts[0])
+        j = int(parts[1])
+        v = float(parts[2])
+        edges.append((i,j,v))
+    return edges
+    
 class UnknownGraphTypeError(Exception):
     def __init__(self,message):
         self.message = message

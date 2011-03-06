@@ -375,7 +375,7 @@ int main_blacs(int argc, char **argv, int nprow, int npcol) {
         
         scalapack_symmetric_eigen P(A);
         
-        P.setup(vectors, minmemory, true);
+        P.setup(vectors, minmemory, true, false);
 
         printf("[%3i x %3i] allocating %Zu bytes for eigenproblem\n",
             myrow, mycol, P.bytes());

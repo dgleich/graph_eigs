@@ -16,6 +16,8 @@
  *   desired scalapack features.
  * :2010-11-14: Added Markov matrix
  * :2010-11-17: Added graph checking
+ * :2011-02-15: Added commute time computation
+ * :2011-03-05: Added commute time score output
  * 
  * Todo
  * ----
@@ -87,6 +89,7 @@
 
 #include "triplet_graph.hpp"
 #include "graph_eigs_opts.hpp"
+#include "permutation.hpp"
 
 const int graph_eigs_version = 4;
 
@@ -206,7 +209,7 @@ bool write_vector(const char* filename, double *a, size_t n) {
         fclose(f);
         return true;
     } else {
-        printf("Could not open %s\n", filename);
+        printf("Error: Could not open %s\n", filename);
         return false;
     }
 }
@@ -231,7 +234,7 @@ bool write_matrix(const char* filename, double *a, size_t m, size_t n) {
         fclose(f);
         return true;
     } else {
-        printf("Could not open %s\n", filename);
+        printf("Error: Could not open %s\n", filename);
         return false;
     }
 }
@@ -400,7 +403,7 @@ void write_data_safely(const char *type, const char* vname, unsigned int indent,
  */
 void find_large_residuals(std::vector<double>& resids, double *scale, double tol)
 {
-    printf("   Checking for residuals larger than %.2e.\n", tol);
+    printf("  Checking for residuals larger than %.2e.\n", tol);
     for (size_t i=0; i<resids.size(); ++i) {
         double err = fabs(resids[i])/(fabs(scale[i])+1.);
         if (err > tol) {
@@ -415,6 +418,92 @@ void find_large_residuals(std::vector<double>& resids, double *scale, double tol
     }
 }
 
+FILE* fopen_with_error(const char* filename, const char* mode) {
+    FILE *f = fopen(filename, mode);
+    if (!f) {
+        fprintf(stderr, "Error: Could not open %s with mode %s\n", 
+            filename, mode);
+    }
+    return f;
+}
+
+/** Output the largest and smallest elements in a matrix to files.
+ * 
+ * Given a matrix, for each column, we output the `nelem` largest
+ * and smallest elements to `large_filename` and `small_filename`,
+ * respectively.  This involves saving each column on one processor
+ * and then sorting the elements, and outputing the respective
+ * sets to each file.  The file format is:
+ * File: Header\n Element*[<nelem>*<ncols>]\n
+ * Header: <nrows> <ncols> <nelem>*<ncols>
+ * Element: <rowid> <colid> <value>\n
+ */
+void write_largest_and_smallest_matrix_column_elements(
+    scalapack_distributed_matrix& A,
+    int nelem,
+    std::string large_filename, std::string small_filename)
+{
+    // check that nelem isn't too large
+    if (nelem > A.m) { nelem = A.m; }
+    
+    // create an iterator which gets a column of the matrix at once,
+    // with a A.m sized buffer
+    scalapack_distributed_matrix_element_iterator iter(A, 1, 1, A.m);
+    
+    //printf("[%3i x %3i] Starting iterator...\n",
+    //     A.myrow, A.mycol);
+    
+    FILE *sfile=NULL, *lfile=NULL;
+    if (iter.root) {
+        sfile = fopen_with_error(small_filename.c_str(), "wt");
+        lfile = fopen_with_error(large_filename.c_str(), "wt");
+        if (!sfile || !lfile) {
+            return;
+        }
+        
+        // write the headers
+        fprintf(sfile, "%i %i %i\n", A.m, A.n, nelem*A.n);
+        fprintf(lfile, "%i %i %i\n", A.m, A.n, nelem*A.n);
+    }    
+    
+    while (iter.next()) {
+        
+        // this will get one column
+        if (iter.root) {
+            //printf("[%3i x %3i] Next column (%i,%i) - (%i,%i)\n",
+            //    A.myrow, A.mycol, iter.istart, iter.jstart, iter.isize, iter.jsize);
+            assert(iter.isize == A.m);
+            assert(iter.jsize == 1);
+            std::vector<int> order(0);
+            sort_permutation(iter.work, order);
+            // the array is now sorted in decreasing order
+            // the largest elements are in iter.work[0:nelem]
+            // the smallest element are in iter.work[end-nelem+1:]
+            
+            assert(nelem <= (int)order.size());
+            
+            // output the largest
+            for (int i=0; i<nelem; ++i) {
+                fprintf(lfile, "%i %i %.18g\n", 
+                    order[i], iter.jstart-1, iter.work[order[i]]);
+            }
+            // output the smallest elements, except for the last element,
+            // which is always the diagonal one.
+            for (int i=0; i<nelem; ++i) {
+                int ei = order.size() - nelem + i;
+                fprintf(sfile, "%i %i %.18g\n",
+                    order[ei], iter.jstart-1, iter.work[order[ei]]);
+            }
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+    
+    if (iter.root) {
+        fclose(sfile);
+        fclose(lfile);
+    }
+}    
+
 /** Compute and output data on commute times.
  * 
  * This uses extra work memory used for computing the eigenvalues.
@@ -422,9 +511,14 @@ void find_large_residuals(std::vector<double>& resids, double *scale, double tol
  */
 template <typename EigenSolver>
 void compute_commute_times(scalapack_distributed_matrix& A, EigenSolver &P) {
-            
+    bool root = A.myrow == 0 && A.mycol == 0;
+    if (root) {
+        printf("  Computing commute-time scores\n");
+    }
     scalapack_distributed_matrix C;
-    tlist.start_event("commute");
+    if (root) {
+        tlist.start_event("commute");
+    }
     P.pseudoinverse(C); // compute the pseudo-inverse
     std::vector<double> diags(A.n,0.);
     C.diagonals(&diags[0]);
@@ -440,9 +534,30 @@ void compute_commute_times(scalapack_distributed_matrix& A, EigenSolver &P) {
             }
         }
     }
-    tlist.report_event(6);
+    if (root) {
+        tlist.report_event(6);
+    }
     
-    C.write(opts.commute_all_filename.c_str(), 0, 0);
+    if (opts.commute_scores) {
+        if (root) {
+            printf("    Writing %i largest commute-time elements to %s.\n",
+                opts.ncommute_scores, opts.commute_large_scores_filename.c_str());
+            printf("    Writing %i smallest commute-time elements to %s.\n",
+                opts.ncommute_scores, opts.commute_small_scores_filename.c_str());
+        }
+        write_largest_and_smallest_matrix_column_elements(C, 
+            opts.ncommute_scores,
+            opts.commute_large_scores_filename, 
+            opts.commute_small_scores_filename);
+    }
+    
+    if (opts.commute_all) {
+        if (root) {
+            printf("    Writing commute-time matrix to %s.\n",
+                    opts.commute_all_filename.c_str());
+        }
+        C.write(opts.commute_all_filename.c_str(), 0, 0);
+    }
 }    
 
 /** Compute data on the Markov matrix from the normalized Laplacian.
@@ -543,7 +658,13 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A)
     
     EigenSolver P(A);
     
-    P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag);
+    bool extra = false;
+    if (opts.matrix == opts.laplacian_matrix &&
+        opts.commute && (opts.commute_all || opts.commute_scores)) {
+        extra = true;
+    }
+    
+    P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag, extra);
     
     if (opts.verbose) {
         printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
