@@ -356,6 +356,32 @@ void assign_graph_modularity(scalapack_distributed_matrix& A, triplet_data& g)
     
 }
 
+void assign_graph_matrix(triplet_data& g, scalapack_distributed_matrix& A, 
+    graph_eigs_options::matrix_type t)
+{
+    switch (t) {
+        case graph_eigs_options::adjacency_matrix:
+            mpi_world_printf("Constructing the adjacency matrix.\n");
+            assign_graph_adjacency(A, g);
+            break;
+            
+        case graph_eigs_options::laplacian_matrix:
+            mpi_world_printf("Constructing the Laplacian matrix.\n");
+            assign_graph_laplacian(A, g);
+            break;
+            
+        case graph_eigs_options::normalized_laplacian_matrix:
+            mpi_world_printf("Constructing the normalized Laplacian matrix.\n");
+            assign_graph_normalized_laplacian(A, g);
+            break;
+            
+        case graph_eigs_options::modularity_matrix:
+            mpi_world_printf("Constructing the modularity matrix.\n");
+            assign_graph_modularity(A, g);
+            break;
+    }
+}
+
 /** Initialize blacs
  * This is needed for many blacs implementations. 
  */
@@ -722,10 +748,8 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A)
             
             if (opts.vectors) {
                 // write the matrix on the root processor
-                if (root) {
-                    printf("    Writing eigenvectors to %s.\n", 
-                        opts.vectors_filename.c_str());
-                }
+                mpi_world_printf("    Writing eigenvectors to %s.\n",
+                    opts.vectors_filename.c_str());
                 P.Z.write(opts.vectors_filename, 0, 0);
                 //write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
             }
@@ -739,6 +763,7 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A)
             }*/
 
             if (opts.residuals) {
+                mpi_world_printf("    Computing residuals.\n");
                 std::vector<double> resids;
                 tlist.start_event("residuals");
                 P.residuals(resids);
@@ -835,6 +860,10 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
             printf("Error: the graph is not-symmetric.\n");
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
+        if (!g.has_repeated_edges()) {
+            printf("Error: the graph has repeated edges.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
         
         if (opts.verbose) {
             printf("Broadcasting graph data.\n");
@@ -875,28 +904,9 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
            myrow, mycol);
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
+
+    assign_graph_matrix(g, A, opts.matrix);
     
-    switch (opts.matrix) {
-        case graph_eigs_options::adjacency_matrix:
-            mpi_world_printf("Constructing the adjacency matrix.\n");
-            assign_graph_adjacency(A, g);
-            break;
-            
-        case graph_eigs_options::laplacian_matrix:
-            mpi_world_printf("Constructing the Laplacian matrix.\n");
-            assign_graph_laplacian(A, g);
-            break;
-            
-        case graph_eigs_options::normalized_laplacian_matrix:
-            mpi_world_printf("Constructing the normalized Laplacian matrix.\n");
-            assign_graph_normalized_laplacian(A, g);
-            break;
-            
-        case graph_eigs_options::modularity_matrix:
-            mpi_world_printf("Constructing the modularity matrix.\n");
-            assign_graph_modularity(A, g);
-            break;
-    }
     tlist.end_event();
     if (root) {
         tlist.report_event(2);

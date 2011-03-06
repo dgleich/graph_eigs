@@ -66,8 +66,8 @@ struct triplet_data {
             int ri = r[nzi];
             int cj = c[nzi];
             // insert doesn't overwrite existing values
-            graph[ri].insert(std::make_pair(ri,0));
-            graph[cj].insert(std::make_pair(cj,0));
+            graph[ri].insert(std::make_pair(cj,0));
+            graph[cj].insert(std::make_pair(ri,0));
             graph[ri][cj] += 1;
             graph[cj][ri] -= 1;
         }
@@ -106,8 +106,39 @@ struct triplet_data {
         }
         return curmin;
     }
-            
-        
+         
+    /** Check to make sure that none of the edges are repeated. */
+    bool has_repeated_edges() {
+        typedef std::map<int,int> vmap;
+        typedef std::vector< vmap > graph_type;
+        graph_type graph(nrows);
+        for (int nzi=0; nzi<nnz; ++nzi) {
+            int ri = r[nzi];
+            int cj = c[nzi];
+            // insert doesn't overwrite existing values
+            graph[ri].insert(std::make_pair(cj,0));
+            graph[ri][cj] += 1;
+        }
+        bool rval = true;
+        const int maxwarn = 5;
+        int warn = 0;
+        for (int ri=0; ri<nrows; ++ri) {
+            for (vmap::const_iterator vit=graph[ri].begin(); 
+                 vit != graph[ri].end(); ++vit) {
+                if (vit->second != 1) {
+                    rval = false;
+                    if (warn < maxwarn) {
+                        printf("Graph has a repeated edge, check element (%i,%i)\n",
+                            ri, vit->first);
+                        warn+= 1;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+        return (rval);
+    }
     
     bool read_smat(const char* filename) {
         FILE *f = fopen(filename, "rt");
