@@ -70,6 +70,9 @@ int main(int argc, char **argv) {
                     for (int i=0; i<iter.isize; ++i) {
                         printf("A(%i,%i) = %g\n",
                             iter.istart+i, iter.jstart+j, iter.element(i,j));
+                            
+                        assert(iter.element(i,j) == 
+                            (double)((iter.jstart+j-1)+(iter.istart+i-1)*n));
                     }
                 }
             }
@@ -96,6 +99,10 @@ int main(int argc, char **argv) {
                     for (int i=0; i<iter.isize; ++i) {
                         printf("A(%i,%i) = %g\n",
                             iter.istart+i, iter.jstart+j, iter.element(i,j));
+                            
+                                                    
+                        assert(iter.element(i,j) == 
+                            (double)((iter.jstart+j-1)+(iter.istart+i-1)*n));
                     }
                 }
             }
@@ -122,6 +129,10 @@ int main(int argc, char **argv) {
                     for (int i=0; i<iter.isize; ++i) {
                         printf("A(%i,%i) = %g\n",
                             iter.istart+i, iter.jstart+j, iter.element(i,j));
+                            
+                                                    
+                        assert(iter.element(i,j) == 
+                            (double)((iter.jstart+j-1)+(iter.istart+i-1)*n));
                     }
                 }
             }
@@ -148,6 +159,70 @@ int main(int argc, char **argv) {
                     for (int i=0; i<iter.isize; ++i) {
                         printf("A(%i,%i) = %g\n",
                             iter.istart+i, iter.jstart+j, iter.element(i,j));
+                            
+                                                    
+                        assert(iter.element(i,j) == 
+                            (double)((iter.jstart+j-1)+(iter.istart+i-1)*n));
+                    }
+                }
+            }
+        }
+    }
+    
+    {
+        if (root) {
+            printf("creating sub-iterator 1\n");
+        }
+        scalapack_distributed_matrix_element_iterator iter(A, 1, 2, A.m);
+        if (root) {
+            printf("calling next...\n");
+        }
+        while (iter.next()) {
+            if (root) {
+                printf("Got block (%i,%i) - (%i,%i)\n",
+                    iter.istart, iter.jstart,
+                    iter.istart+iter.isize - 1,
+                    iter.jstart+iter.jsize - 1);
+            }
+            if (iter.root && root) {
+                for (int j=0; j<iter.jsize; ++j) {
+                    for (int i=0; i<iter.isize; ++i) {
+                        printf("A(%i,%i) = %g\n",
+                            iter.istart+i, iter.jstart+j, iter.element(i,j));
+                            
+                                                    
+                        assert(iter.element(i,j) == 
+                            (double)((iter.jstart+j-1)+(iter.istart+i-1)*n));
+                    }
+                }
+            }
+        }
+    }
+    
+    {
+        if (root) {
+            printf("creating sub-iterator 1\n");
+        }
+        scalapack_distributed_matrix_element_iterator iter(A, 25, 1, A.m);
+        if (root) {
+            printf("calling next...\n");
+        }
+        while (iter.next()) {
+            if (root) {
+                printf("Got block (%i,%i) - (%i,%i)\n",
+                    iter.istart, iter.jstart,
+                    iter.istart+iter.isize - 1,
+                    iter.jstart+iter.jsize - 1);
+            }
+            if (iter.root && root) {
+                for (int j=0; j<iter.jsize; ++j) {
+                    for (int i=0; i<iter.isize; ++i) {
+                        printf("A(%i,%i) = %g\n",
+                            iter.istart+i, iter.jstart+j, iter.element(i,j));
+                            
+                                                    
+                        assert(iter.element(i,j) == 
+                            (double)((iter.jstart+j-1)+(iter.istart+i-1)*n));
                     }
                 }
             }

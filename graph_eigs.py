@@ -26,6 +26,23 @@ import scipy.linalg
 import simple_graph
 import scipy_wrap
 
+def fix_sign(x,y):
+    """ Make sure that x and y have signs that are the same. 
+    
+    This function corrects for vectors that could be nearly zero.
+    """
+    
+    n = min(len(x),len(y))
+    for i in xrange(n):
+        if abs(x[i]) > n*2.2e-16 and abs(y[i] > n*2.2e-16):
+            if x[i] < 0.:
+                x = x*-1.
+            if y[i] < 0.:
+                y = y*-1.
+            return x,y
+    return x,y
+
+
 def read_scalapack_matrix(fn):
     d = numpy.loadtxt(fn,skiprows=1,
             converters={0: lambda x: x.replace('D','e')})
@@ -235,6 +252,8 @@ def setup_command_line_options():
         help="Filename of small commute times file to check.")
     g.add_option('--check-commute-scores-large',default=None,metavar="FILE",
         help="Filename of large commute times file to check.")
+    g.add_option('--check-fiedler',default=None,metavar="FILE",
+        help="Filename of a fiedler vector to check.")
     parser.add_option_group(g)
   
     return parser
@@ -463,7 +482,74 @@ def check_commute(g,opts):
             else:
                 print "commute scores (small): %s ; warnings"%(
                     opts.check_commute_scores_small)
+        
+def compare_fiedler_vector(f,M,Q,v):
+    # first find our fiedler vector
+    sigmamax = numpy.abs(v).max()
+    # find the smallest positive eigenvalues larger than 2.2e-16*n*sigmamax
+    ind = -1
+    l2 = sigmamax
     
+    for i,a in enumerate(v):
+        if a > sigmamax*Q.shape[0]*2.2e-16:
+            if a < l2:
+                l2 = a
+                ind = i
+    if ind==-1:
+        rval = False
+        print >>sys.stderr, "Could not find Fielder vector!"
+        return false
+        
+    # get the vector
+    myf = Q[:,ind].copy()
+    # check the nextgap, this assumes the eigenvalues are sorted
+    nextgap = v[ind+1]-v[ind]
+    if nextgap < sigmamax*2.2e-16*Q.shape[0]:
+        maybedup = True
+    else:
+        maybedup = False
+    
+    # normalize sign    
+    f, myf = fix_sign(f, myf);
+    
+    
+    # now compare
+    if len(f) != len(myf):
+        print >>sys.stderr, "fiedler vector has the wrong size: %i != %i"%(
+            len(f), len(myf))
+        return False
+        
+    # check to make sure we get the same eigenvalue, 
+    lam2 = numpy.dot(f,numpy.dot(M,f))
+    if abs(lam2 - l2)/(1+l2) > 2.2e-16*len(myf)*sigmamax:
+        print >>sys.stderr, "Fiedler eigenvalue too different numpy=%.18g file=%.18g."%(
+            l2, lam2)
+        return False
+        
+    
+    ndiff = 0
+    for i in xrange(len(f)):
+        if abs(f[i]-myf[i])/(1+abs(myf[i])) > 2.2e-16*len(myf):
+            if not maybedup:
+                print >>sys.stderr, "fiedler element %i: %.18e and %.18e are too different"%(
+                    i, f[i],myf[i])
+                ndiff += 1
+                
+    return ndiff == 0
+        
+def check_fiedler(g,opts,M,Q,v):
+    """ Check that the fiedler vector is accurate. """
+    if opts.check_fiedler:
+        f = numpy.loadtxt(opts.check_fiedler)
+        if compare_fiedler_vector(f,matrix_types[opts.type]['matrix'](g),Q,v):
+            print "fiedler vector: %s ; okay"%(
+                opts.check_fiedler)
+        else:
+            print "fiedler vector: %s ; warnings"%(
+                opts.check_fiedler)
+    
+        
+        
     
 """ Compare properties of two sets of eigenvectors. """
 def check_evecs(g,opts,Q,v):
@@ -546,6 +632,8 @@ def main():
             check_evecs(g, opts, Q, v)
             if opts.type == 'laplacian':
                 check_commute(g, opts)
+            if opts.type == 'laplacian' or opts.type == 'normalized':
+                check_fiedler(g, opts, M, Q, v)
             return
         if opts.evals is not False:
             vprint("Writing eigenvalues : %s"%(opts.output))

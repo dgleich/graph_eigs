@@ -185,6 +185,8 @@ struct scalapack_distributed_matrix {
         }
     }
     
+    void column(int j, double *col);
+    
     /** Aggregate the diagonal entries on each processor.
      * @param diag
      *   the output vector of diagonal entries, valid on each processor.
@@ -481,17 +483,13 @@ struct scalapack_distributed_matrix_element_iterator {
         int worksize=0,
         int pi_=0, int pj_=0) 
     : work(0), ia(ia_), ja(ja_), pi(pi_), pj(pj_), 
-      m(A_.m), n(A_.n), A(A_.A), Adesc(A_.desc)
+      m(A_.m-ia+1), n(A_.n), A(A_.A), Adesc(A_.desc)
     {
         // set root
         root = (pi == A_.myrow && pj == A_.mycol);
         // determine worksize
         lwork = (size_t) std::max(worksize, A_.mb);
         work.resize(lwork);
-        
-        // TODO remove these restrictions
-        assert(ia == 1);
-        assert(ja == 1);
         
         mm = std::max(1, std::min(m, lwork));
         nn = std::max(1, lwork/mm);
@@ -516,24 +514,30 @@ struct scalapack_distributed_matrix_element_iterator {
         if (done) { return false; }
         if (!first) {
             // increment to next istart, jstart
+            // TODO update m and n to be correct for sub-matrices
             istart += mm;
-            if (istart > ia + m - 1) {
+            if (istart > m) {
                 istart = ia;
                 jstart += nn;
-                if (jstart > ja + n - 1) {
+                if (jstart > n) {
                     done = true;
                     return false;
                 }
             }
             // this iterator tries to implement the for loop
-            // for (int jstart = ja; jstart <= ja + n - 1; jstart += nn) {
-            //   for (int istart = ia; istart <= ia + m - 1; istart += mm) {
+            // for (int jstart = ja; jstart <= n; jstart += nn) {
+            //   for (int istart = ia; istart <= m; istart += mm) {
         } else {
             // need to check to make sure the matrix isn't empty
+            // and there is stuff left to read from the starting position
             if (m == 0 || n == 0) { 
                 done=true; 
                 return false;
+            } else if (jstart > n) {
+                done = true;
+                return false;
             }
+            // TODO check if there is no more stuff to read more carefully
             first = false;
         }
         // we load columns jstart to jend
@@ -549,6 +553,7 @@ struct scalapack_distributed_matrix_element_iterator {
         return true;
     }
     
+    /*
     void print() {
         printf("Current iterator state:\n");
         printf("isize = %i\n", isize);
@@ -558,6 +563,7 @@ struct scalapack_distributed_matrix_element_iterator {
         printf("first = %i\n", (int)first);
         printf("done = %i\n", (int)done);
     }
+    */
     
     void reset() {
         done = false;
@@ -609,6 +615,23 @@ void scalapack_distributed_matrix::write(std::string filename, int pi, int pj) {
         assert(outf == NULL);
     }
 }    
+
+/** Aggregate a column of the matrix onto the root processor.
+ * 
+ * The current implementation requires 2*n memory.  This can be fixed
+ * with a more careful implementation.
+ * TODO Implement the n memory option!
+ * 
+ * @param j the column number (zero-indexed based)
+ * @param diag an array with at least n doubles allocated.
+ */
+void scalapack_distributed_matrix::column(int j, double *col) {
+    assert(j < n);
+    scalapack_distributed_matrix_element_iterator iter(*this, 1, j+1, m, 0, 0);
+    bool rval = iter.next(); // just one call to get the matrix
+    assert(rval == true);
+    memcpy(col, &iter.work[0], sizeof(double)*m);  
+}
 
 struct scalapack_symmetric_eigen {
     int ictxt;

@@ -45,9 +45,14 @@ test_$(1) : graph_eigs
 	    --check-resids test/$(1).smat.laplacian.resids \
 	    --check-commute-all test/$(1).smat.laplacian.ctimes \
 	    --check-commute-scores-small test/$(1).smat.laplacian.commute-small \
-	    --check-commute-scores-large test/$(1).smat.laplacian.commute-large
+	    --check-commute-scores-large test/$(1).smat.laplacian.commute-large \
+	    --check-fiedler test/$(1).smat.laplacian.fiedler
 	$(2) ./graph_eigs test/$(1).smat -n -r -p > /dev/null
-	python graph_eigs.py test/$(1).smat -n --check-eigs test/$(1).smat.normalized.eigs --check-ipar test/$(1).smat.normalized.ipar --check-resids test/$(1).smat.normalized.resids
+	python graph_eigs.py test/$(1).smat -n \
+	    --check-eigs test/$(1).smat.normalized.eigs \
+	    --check-ipar test/$(1).smat.normalized.ipar \
+	    --check-resids test/$(1).smat.normalized.resids \
+	    --check-fiedler test/$(1).smat.normalized.fiedler
 	python graph_eigs.py test/$(1).smat --type=markov --check-eigs test/$(1).smat.normalized-markov.eigs --check-ipar test/$(1).smat.normalized-markov.ipar
 	$(2) ./graph_eigs test/$(1).smat -m -r -p > /dev/null
 	python graph_eigs.py test/$(1).smat -m --check-eigs test/$(1).smat.modularity.eigs --check-ipar test/$(1).smat.modularity.ipar --check-resids test/$(1).smat.modularity.resids

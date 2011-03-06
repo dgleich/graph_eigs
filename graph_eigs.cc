@@ -18,12 +18,11 @@
  * :2010-11-17: Added graph checking
  * :2011-02-15: Added commute time computation
  * :2011-03-05: Added commute time score output
+ * :2011-03-06: Added Fiedler computation
  * 
  * Todo
  * ----
  * TODO output extremal eigenvalues for checking
- * TODO Add commute time output for laplacian
- * TODO Add Fiedler vector output for nlaplacian/laplacian
  * TODO Add switching eigensolver
  * TODO add report with output:
  *   - graph name
@@ -586,6 +585,67 @@ void compute_commute_times(scalapack_distributed_matrix& A, EigenSolver &P) {
     }
 }    
 
+/** Find the fielder vector
+ * The fiedler vector is the eigenvector for the first non-zero eigenvalue
+ * of a Laplacian matrix.  
+ * 
+ * This function works with the absolute values of the eigenvalues to 
+ * avoid issues with slightly negative eigenvalues exceeding the 
+ * a tolerance.
+ * 
+ * An eigenvalue is considered zero if fabs(lambda) < n*sigmamax*2.2e-16
+ * 
+ * @param fielder 
+ * @param index an output variable for the index of the Fiedler vector
+ * @return true if the Fiedler vector was found.
+ */
+bool find_fiedler(double* values, scalapack_distributed_matrix& Z,
+    double *fiedler, int* index)
+{  
+    // this function does not assume that the eigenvalues are sorted.
+      
+    // first determine the zero eigenvalue tolerance
+    // find the largest eigenvalue value of A
+    double sigmamax = values[0];
+    int imax = 0;
+    for (int i=1; i<Z.n; ++i) {
+        if (fabs(values[i]) > sigmamax) {
+            sigmamax = fabs(values[i]);
+            imax = i;
+        } 
+    }
+    // set the zero tolerance
+    double tol = (double)Z.n*2.2e-16*sigmamax;
+    
+    // now find the smallest non-zero eigenvalue
+    if (sigmamax < 2.2e-16*(double)Z.n) {
+        // there are no non-zero eigenvalues...
+        return false;
+    }
+    
+    double nzmin = sigmamax;
+    int nzind = imax;
+    for (int i=0; i<Z.n; ++i) {
+        if (values[i] > tol && values[i] < nzmin) {
+            nzmin = values[i];
+            nzind = i;
+        }
+    }
+    // get the column
+    if (fiedler) {
+        Z.column(nzind, fiedler);
+    }
+    
+    if (index) {
+        *index = nzind;
+    }
+    
+    return true;
+}
+
+
+
+
 /** Compute data on the Markov matrix from the normalized Laplacian.
  * For an undirected graph, the eigenvalues and vectors of the 
  * Markov chain transition matrix can be computed via the eigenvalues
@@ -754,13 +814,38 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A)
                 //write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
             }
             
-            /*if (opts.fiedler) {
-                std::vector<double> fiedler;
-                //find_fiedler(P.values, P.Z, fiedler);
-                write_data_safely("fiedler", "f", 2,
-                    opts.fiedler_vector_filename.c_str(),  
-                    &fiedler[0], n, 1, false);
-            }*/
+            // output the Fiedler vector
+            // TODO make this a function
+            if ((opts.matrix == opts.normalized_laplacian_matrix ||
+                opts.matrix == opts.laplacian_matrix) && opts.fiedler) {
+                std::vector<double> fiedler(P.n, 0.);
+                int fvind = 0;
+                bool rval = find_fiedler(P.values, P.Z, &fiedler[0], &fvind);
+                
+                if (rval == false) {
+                    mpi_world_printf("  Could not find fiedler vector.\n");
+                } else {
+                    double lam = P.values[fvind];
+                    double gap0 = 1./0.;
+                    double gap1 = 1./0.;
+                    if (fvind > 0) {
+                        gap0 = lam - P.values[fvind-1];
+                    }
+                    if (fvind < n-1) {
+                        gap1 = P.values[fvind+1] - lam;
+                    }
+                    mpi_world_printf("    Fiedler vector:\n");
+                    mpi_world_printf("      ind=%i\n", fvind);
+                    mpi_world_printf("      lambda=%.18g\n", lam);
+                    mpi_world_printf("      gap0=%8.3e\n", gap0);
+                    mpi_world_printf("      gap1=%8.3e\n", gap1);
+                    if (root) {
+                        write_data_safely("fiedler", "f", 2,
+                            opts.fiedler_vector_filename.c_str(),  
+                            &fiedler[0], n, 1, false);
+                    }
+                }
+            }
 
             if (opts.residuals) {
                 mpi_world_printf("    Computing residuals.\n");
