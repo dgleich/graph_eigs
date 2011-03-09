@@ -499,7 +499,7 @@ bool parse_command_line_arguments(int argc, char **argv) {
     while (opt != -1) {
         switch (opt) {
             case 'v': opts.verbose = true; break;
-            case 'h': usage(); return false; break;
+            case 'h': usage(); return false; 
             case 'b': 
                 opts.nb = atoi(optarg); 
                 if (opts.nb <= 0) {

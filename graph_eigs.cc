@@ -72,6 +72,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -79,6 +80,7 @@
 #include <assert.h>
 #include <getopt.h>
 
+#include <string>
 #include <vector>
 
 #include <mpi.h>
@@ -764,8 +766,10 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A)
     P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag, extra);
     
     if (opts.verbose) {
-        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; Z=%i, work=%i\n",
-            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork);
+        printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; "
+               "Z=%i, work=%i, iwork=%i\n",
+            myrow, mycol, P.bytes(), P.vectors*P.Z.ap*P.Z.aq, P.lwork, 
+            P.liwork);
     }
     
     if (!P.allocate()) {

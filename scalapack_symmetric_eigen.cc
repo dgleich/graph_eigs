@@ -27,6 +27,19 @@
 #include <blas.h>
 #include <blacs.h>
 #include <scalapack.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+
+#ifdef NEED_STRNLEN
+size_t
+strnlen (const char *string, size_t maxlen)
+{
+  const char *end = (const char*)memchr (string, '\0', maxlen);
+  return end ? (size_t) (end - string) : maxlen;
+}
+#endif
 
 #include <vector>
 

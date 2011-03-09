@@ -11,6 +11,7 @@
 #include <math.h>
 #include <assert.h>
 
+#include <string>
 #include <vector>
 
 #include <mpi.h>
