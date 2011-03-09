@@ -46,7 +46,8 @@ test_$(1) : graph_eigs
 	    --check-commute-all test/$(1).smat.laplacian.ctimes \
 	    --check-commute-scores-small test/$(1).smat.laplacian.commute-small \
 	    --check-commute-scores-large test/$(1).smat.laplacian.commute-large \
-	    --check-fiedler test/$(1).smat.laplacian.fiedler
+	    --check-pseudoinverse-diagonals test/$(1).smat.laplacian.pinvdiags \
+	    --check-fiedler test/$(1).smat.laplacian.fiedler 
 	$(2) ./graph_eigs test/$(1).smat -n -r -p > /dev/null
 	python graph_eigs.py test/$(1).smat -n \
 	    --check-eigs test/$(1).smat.normalized.eigs \

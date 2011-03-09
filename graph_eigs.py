@@ -10,6 +10,9 @@ History
 -------
 :2010-11-02: Initial coding
 :2011-02-15: Added commute time checking
+:2011-03-06: Added commute time scores checking
+:2011-03-08: Added Fiedler vector checking
+:2011-03-08: Added pseudo-inverse diagonal checking
 """
 
 __author__ = 'David F. Gleich'
@@ -158,6 +161,8 @@ def markov_matrix(graph):
 def commute_time(graph):
     """
     @param graph the raw graph data.
+    @return C, d the commute time matrix and the matrix of 
+        pseudo-inverse diagonals
     """
     L = laplacian_matrix(graph)
     C = scipy.linalg.pinv2(L)
@@ -167,7 +172,7 @@ def commute_time(graph):
         for j in xrange(C.shape[1]):
             C[i,j] = d[i] + d[j] - 2*C[i,j]
             if i==j: C[i,j] = 0.
-    return C
+    return C, d
 
 def setup_command_line_options():
     usage = "python %prog [options] graphfile"
@@ -252,6 +257,8 @@ def setup_command_line_options():
         help="Filename of small commute times file to check.")
     g.add_option('--check-commute-scores-large',default=None,metavar="FILE",
         help="Filename of large commute times file to check.")
+    g.add_option('--check-pseudoinverse-diagonals',default=None,metavar="FILE",
+        help="Filename of vector of pseudoinverse diagonals to check.")        
     g.add_option('--check-fiedler',default=None,metavar="FILE",
         help="Filename of a fiedler vector to check.")
     parser.add_option_group(g)
@@ -312,6 +319,18 @@ def participation_ratios(Q):
         p[i] = evec.sum()/(sum2*sum2)
         
     return p
+    
+def compare_vectors(v1,v2,vtype=""):
+    ndiff = 0
+    assert(v1.size == v2.size)
+    for i,ev1 in enumerate(v1):
+        if abs(ev1-v2[i])/(1+abs(ev1)) > 2.2e-16*len(v1):
+            print >>sys.stderr, "%s %.18e and %.18e are too different"%(
+                vtype,ev1,v2[i])
+            ndiff += 1
+        
+    return ndiff
+        
         
     
 def compare_eigs(v1,v2):
@@ -321,9 +340,10 @@ def compare_eigs(v1,v2):
     v2 = v2.copy()
     v1.sort()
     v2.sort()
+    sigmamax = numpy.abs(v1).max()
     ndiff = 0
     for i,ev1 in enumerate(v1):
-        if abs(ev1-v2[i])/(1+abs(ev1)) > 1e-16*len(v1):
+        if abs(ev1-v2[i])/(1+abs(ev1)) > 2e-16*len(v1)*sigmamax:
             print >>sys.stderr, "eigs %.18e and %.18e are too different"%(
                 ev1,v2[i])
             ndiff += 1
@@ -331,9 +351,10 @@ def compare_eigs(v1,v2):
     return ndiff
     
     
+    
+    
 """ Compare two different sets of computed eigenvalues. """    
 def check_eigs(opts,v):
-    
     if opts.check_eigs is not None:
         myeigs = v
         fileeigs = numpy.loadtxt(opts.check_eigs)
@@ -456,7 +477,17 @@ def check_commute(g,opts):
     if opts.check_commute_all is not None or \
        opts.check_commute_scores_large is not None or \
        opts.check_commute_scores_small is not None:
-        C = commute_time(g)
+        C,d = commute_time(g)
+        
+        if opts.check_pseudoinverse_diagonals is not None:
+            pid = numpy.loadtxt(opts.check_pseudoinverse_diagonals)
+            ndiff = compare_vectors(d, pid, "pseudoinverse diagonals")
+            if ndiff > 0:
+                print "pseudoinverse diagonals: %s ; warning %i values differ"%(
+                    opts.check_pseudoinverse_diagonals, ndiff)
+            else:
+                print "pseudoinverse diagonals: %s ; okay"%(
+                    opts.check_pseudoinverse_diagonals)
 
         if opts.check_commute_all is not None:
             F = read_scalapack_matrix(opts.check_commute_all)
@@ -529,7 +560,7 @@ def compare_fiedler_vector(f,M,Q,v):
     
     ndiff = 0
     for i in xrange(len(f)):
-        if abs(f[i]-myf[i])/(1+abs(myf[i])) > 2.2e-16*len(myf):
+        if abs(f[i]-myf[i])/(1+abs(myf[i])) > 2.2e-16*len(myf)*sigmamax:
             if not maybedup:
                 print >>sys.stderr, "fiedler element %i: %.18e and %.18e are too different"%(
                     i, f[i],myf[i])
@@ -629,11 +660,15 @@ def main():
         v = matrix_types[opts.type]['evals_post'](g, v)
         Q = matrix_types[opts.type]['evecs_post'](g, Q)
         if check_mode: 
+            print
+            print "Checking computations on %s"%(opts.graphfilename)
             check_evecs(g, opts, Q, v)
             if opts.type == 'laplacian':
                 check_commute(g, opts)
             if opts.type == 'laplacian' or opts.type == 'normalized':
                 check_fiedler(g, opts, M, Q, v)
+            print "Finished checks."
+            print
             return
         if opts.evals is not False:
             vprint("Writing eigenvalues : %s"%(opts.output))

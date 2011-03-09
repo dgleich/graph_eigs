@@ -19,10 +19,13 @@
  * :2011-02-15: Added commute time computation
  * :2011-03-05: Added commute time score output
  * :2011-03-06: Added Fiedler computation
+ * :2011-03-08: Added pseudo-inverse diagonal output
+ * 
  * 
  * Todo
  * ----
  * TODO output extremal eigenvalues for checking
+ * TODO add options for pseudoinverse of the diagonal
  * TODO Add switching eigensolver
  * TODO add report with output:
  *   - graph name
@@ -561,6 +564,14 @@ void compute_commute_times(scalapack_distributed_matrix& A, EigenSolver &P) {
     }
     if (root) {
         tlist.report_event(6);
+    }
+    
+    if (opts.pseudoinverse_diagonals) {
+        if (root) {
+            write_data_safely("pseudoinverse diagonal elements", "pid", 2,
+                opts.pseudoinverse_diagonals_filename.c_str(), 
+                &diags[0], A.n, 1, false);
+        }
     }
     
     if (opts.commute_scores) {

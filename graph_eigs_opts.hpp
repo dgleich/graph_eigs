@@ -147,6 +147,7 @@ struct graph_eigs_options {
     bool commute_all; // true to output commute-time matrix
     bool commute_scores; // true to output commute-time score files
     int ncommute_scores; // the number of commute-time scores to output
+    bool pseudoinverse_diagonals;
     
     enum driver_type {
         qr=1,
@@ -184,6 +185,7 @@ struct graph_eigs_options {
     std::string commute_small_scores_filename;
     std::string commute_large_scores_filename;
     std::string commute_all_filename;
+    std::string pseudoinverse_diagonals_filename;
     
     std::string fiedler_vector_filename;
     
@@ -194,6 +196,7 @@ struct graph_eigs_options {
       eigenvalues(true), eigenvectors(false),
       markov(true), commute(true), fiedler(true),
       commute_all(false), commute_scores(true), ncommute_scores(100), 
+      pseudoinverse_diagonals(true),
       solver(mrrr), matrix(normalized_laplacian_matrix),
       nb(176), minmemory(true)
     {}
@@ -331,6 +334,12 @@ struct graph_eigs_options {
                     commute_all_filename.c_str());
                 return false;
             }
+            
+            if (_check_filename(pseudoinverse_diagonals_filename) == false) {
+                printf("Cannot access %s to write pseudo-inverse diagonals\n",
+                    pseudoinverse_diagonals_filename.c_str());
+                return false;
+            }
         }
         return true;
     }
@@ -383,6 +392,7 @@ struct graph_eigs_options {
             if (commute_all && commute_all_filename.size() == 0) {
                 commute_all_filename = output_name + ".ctimes";
             }
+            pseudoinverse_diagonals_filename = output_name + ".pinvdiags";
         }
         
         if (eigenvalues && values_filename.size() == 0) {
@@ -414,9 +424,10 @@ struct graph_eigs_options {
      * This does NOT distribute filenames.
      */
     void distribute() {    
-        int header[16]={verbose, tridiag, residuals, iparscores, vectors,
+        int header[17]={verbose, tridiag, residuals, iparscores, vectors,
                 eigenvalues, eigenvectors, matrix, nb, minmemory, markov, 
-                fiedler, commute, commute_all, commute_scores, ncommute_scores};
+                fiedler, commute, commute_all, commute_scores, ncommute_scores,
+                pseudoinverse_diagonals};
         MPI_Bcast(header, sizeof(header)/sizeof(int), MPI_INT, 0, MPI_COMM_WORLD);
         verbose = header[0];
         tridiag = header[1];
@@ -434,6 +445,7 @@ struct graph_eigs_options {
         commute_all = header[13];
         commute_scores = header[14];
         ncommute_scores = header[15];
+        pseudoinverse_diagonals = header[16];
     }
     
     
