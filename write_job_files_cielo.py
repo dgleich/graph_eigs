@@ -14,18 +14,23 @@ def graph_size(filename):
     header = gfile.readline()
     parts = header.split()
     nverts = int(parts[0])
-    return nverts
+    nedges = int(parts[1])
+    return nverts, nedges
 
 graph = sys.argv[1]
 graphfile = os.path.join(data_dir,graph)
-
-nverts = graph_size(graphfile)
 
 nodemem = 32000000000
 npernode = 16
 nthreads = 1
 
-minnodes = math.ceil(float(nverts)*float(nverts)*4.*8./float(nodemem))
+nverts, nedges = graph_size(graphfile)
+eigenmem = float(nverts)*float(nverts)*4.*8.
+graphmem = float(nedges)*24.
+procmem = float(nverts)*8.*10. + graphmem # over estimate node mem
+
+minnodes = math.ceil(eigenmem/float(nodemem))
+
 
 if len(sys.argv) > 2:
     nnodes = int(sys.argv[2])
@@ -38,6 +43,8 @@ else:
 
 
 nodes = int(math.ceil(nmpiranks/float(npernode)))
+
+procmem += eigenmem/nmpiranks
     
 if len(sys.argv) > 3:
     time = sys.argv[3]    
@@ -46,11 +53,12 @@ else:
     
 print "nodes = %i"%(nodes)
 print "mpiranks = %i"%(nmpiranks)
-print "nprocs = %i"%(nodes*npernode*nthreads)
 print "grid = %.1f x %.1f"%(math.sqrt(nmpiranks),math.sqrt(nmpiranks))
 perproc = int(math.ceil(float(nverts/math.sqrt(nmpiranks))))
 print "per-process = %i x %i"%(perproc,perproc)
-print "total time: %s"%(time)
+print "proc-mem = %4.1f GB"%(procmem/float(2**30))
+print "node-mem = %4.1f GB"%(procmem*npernode/float(2**30))
+print "total time = %s # 8:30:00 is 8.5 hours "%(time)
     
 assert(nodes > minnodes)
 

@@ -55,7 +55,7 @@ perproc = int(math.ceil(float(nverts/math.sqrt(nmpiranks))))
 print "per-process = %i x %i"%(perproc,perproc)
 print "proc-mem = %4.1f GB"%(procmem/float(2**30))
 print "node-mem = %4.1f GB"%(procmem*npernode/float(2**30))
-print "total time: %s"%(time)
+print "total time = %s # 8:30:00 is 8.5 hours "%(time)
     
 assert(nodes > minnodes)
 assert(procmem*npernode < nodemem)
