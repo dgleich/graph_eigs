@@ -36,7 +36,7 @@ clean:
 	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)  pdlawrite.o
 	
 clean_test:
-	rm -rf test/*.inodes
+	rm -rf $(all_tests_clean)
 
 identical_nodes_test: identical_nodes
 	rm -rf test/*.inodes
@@ -46,46 +46,54 @@ identical_nodes_test: identical_nodes
 	diff test/inodes_test2.smat.inodes test/inodes_test2.correct
 	./identical_nodes test/inodes_test3.smat test/inodes_test_three.smat.inodes
 	diff test/inodes_test_three.smat.inodes test/inodes_test3.correct 
+
+define TEST_template 
+test_$(1) : graph_eigs
+	rm -rf test/$(1).smat.*
+	$(2) ./graph_eigs test/$(1).smat -a -r -p > /dev/null
+	python graph_eigs.py test/$(1).smat -a --check-eigs test/$(1).smat.adjacency.eigs --check-ipar test/$(1).smat.adjacency.ipar --check-resids test/$(1).smat.adjacency.resids
+	$(2) ./graph_eigs test/$(1).smat -l -r -p --commute-all > /dev/null
+	python graph_eigs.py test/$(1).smat -l \
+	    --check-eigs test/$(1).smat.laplacian.eigs \
+	    --check-ipar test/$(1).smat.laplacian.ipar \
+	    --check-resids test/$(1).smat.laplacian.resids \
+	    --check-commute-all test/$(1).smat.laplacian.ctimes \
+	    --check-commute-scores-small test/$(1).smat.laplacian.commute-small \
+	    --check-commute-scores-large test/$(1).smat.laplacian.commute-large \
+	    --check-pseudoinverse-diagonals test/$(1).smat.laplacian.pinvdiags \
+	    --check-fiedler test/$(1).smat.laplacian.fiedler 
+	$(2) ./graph_eigs test/$(1).smat -n -r -p > /dev/null
+	python graph_eigs.py test/$(1).smat -n \
+	    --check-eigs test/$(1).smat.normalized.eigs \
+	    --check-ipar test/$(1).smat.normalized.ipar \
+	    --check-resids test/$(1).smat.normalized.resids \
+	    --check-fiedler test/$(1).smat.normalized.fiedler
+	python graph_eigs.py test/$(1).smat --type=markov --check-eigs test/$(1).smat.normalized-markov.eigs --check-ipar test/$(1).smat.normalized-markov.ipar
+	$(2) ./graph_eigs test/$(1).smat -m -r -p > /dev/null
+	python graph_eigs.py test/$(1).smat -m --check-eigs test/$(1).smat.modularity.eigs --check-ipar test/$(1).smat.modularity.ipar --check-resids test/$(1).smat.modularity.resids
 	
-	
-test_tapir:	 graph_eigs
-	rm -rf test/tapir.smat.*
-	./graph_eigs test/tapir.smat -a -r -p > /dev/null
-	python graph_eigs.py test/tapir.smat -a --check-eigs test/tapir.smat.adjacency.eigs --check-ipar test/tapir.smat.adjacency.ipar --check-resids test/tapir.smat.adjacency.resids
-	./graph_eigs test/tapir.smat -l -r -p > /dev/null
-	python graph_eigs.py test/tapir.smat -l --check-eigs test/tapir.smat.laplacian.eigs --check-ipar test/tapir.smat.laplacian.ipar
-	./graph_eigs test/tapir.smat -n -r -p > /dev/null
-	python graph_eigs.py test/tapir.smat -n --check-eigs test/tapir.smat.normalized.eigs --check-ipar test/tapir.smat.normalized.ipar
-	python graph_eigs.py test/tapir.smat --type=markov --check-eigs test/tapir.smat.normalized-markov.eigs --check-ipar test/tapir.smat.normalized-markov.ipar
-	./graph_eigs test/tapir.smat -m -r -p > /dev/null
-	python graph_eigs.py test/tapir.smat -m --check-eigs test/tapir.smat.modularity.eigs --check-ipar test/tapir.smat.modularity.ipar
-	
-test_polblogs: graph_eigs
-	rm -rf test/polblogs-sym-cc.smat.*
-	./graph_eigs test/polblogs-sym-cc.smat -a -r -p > /dev/null
-	python graph_eigs.py test/polblogs-sym-cc.smat -a --check-eigs test/polblogs-sym-cc.smat.adjacency.eigs --check-ipar test/polblogs-sym-cc.smat.adjacency.ipar
-	./graph_eigs test/polblogs-sym-cc.smat -l -r -p > /dev/null
-	python graph_eigs.py test/polblogs-sym-cc.smat -l --check-eigs test/polblogs-sym-cc.smat.laplacian.eigs --check-ipar test/polblogs-sym-cc.smat.laplacian.ipar
-	./graph_eigs test/polblogs-sym-cc.smat -n -r -p > /dev/null
-	python graph_eigs.py test/polblogs-sym-cc.smat -n --check-eigs test/polblogs-sym-cc.smat.normalized.eigs --check-ipar test/polblogs-sym-cc.smat.normalized.ipar
-	python graph_eigs.py test/polblogs-sym-cc.smat --type=markov --check-eigs test/polblogs-sym-cc.smat.normalized-markov.eigs --check-ipar test/polblogs-sym-cc.smat.normalized-markov.ipar
-	./graph_eigs test/polblogs-sym-cc.smat -m -r -p > /dev/null
-	python graph_eigs.py test/polblogs-sym-cc.smat -m --check-eigs test/polblogs-sym-cc.smat.modularity.eigs --check-ipar test/polblogs-sym-cc.smat.modularity.ipar
-	
-test_Caltech: graph_eigs
-	rm -rf test/Caltech36.smat.*
-	./graph_eigs test/Caltech36.smat -a -r -p > /dev/null
-	python graph_eigs.py test/Caltech36.smat -a --check-eigs test/Caltech36.smat.adjacency.eigs --check-ipar test/Caltech36.smat.adjacency.ipar
-	./graph_eigs test/Caltech36.smat -l -r -p > /dev/null
-	python graph_eigs.py test/Caltech36.smat -l --check-eigs test/Caltech36.smat.laplacian.eigs --check-ipar test/Caltech36.smat.laplacian.ipar
-	./graph_eigs test/Caltech36.smat -n -r -p > /dev/null
-	python graph_eigs.py test/Caltech36.smat -n --check-eigs test/Caltech36.smat.normalized.eigs --check-ipar test/Caltech36.smat.normalized.ipar
-	python graph_eigs.py test/Caltech36.smat --type=markov --check-eigs test/Caltech36.smat.normalized-markov.eigs --check-ipar test/Caltech36.smat.normalized-markov.ipar
-	./graph_eigs test/Caltech36.smat -m -r -p > /dev/null
-	python graph_eigs.py test/Caltech36.smat -m --check-eigs test/Caltech36.smat.modularity.eigs --check-ipar test/Caltech36.smat.modularity.ipar
+all_tests += test_$(1)
+all_tests_clean += test/$(1).smat.*
+endef
 	
 
+$(eval $(call TEST_template,tiny,))	
+$(eval $(call TEST_template,karate,))	
+$(eval $(call TEST_template,tapir,mpirun -np 4))
+$(eval $(call TEST_template,polblogs-sym-cc,))
+$(eval $(call TEST_template,Caltech36,mpirun -np 4))
 
-test: graph_eigs clean_test test_tapir test_polblogs test_Caltech identical_nodes_test
+test/element_iterator.o: scalapack_symmetric_eigen.cc
+test/element_iterator: test/element_iterator.o 
+
+test_element_iterator: test/element_iterator
+	mpirun -np 4 test/element_iterator > /dev/null
+
+all_tests_clean += test/element_iterator test/*.inodes
+all_tests += test_element_iterator identical_nodes_test
+
+test: test_tiny test_karate test_element_iterator identical_nodes_test
+
+all_tests: $(all_tests)
 
 	

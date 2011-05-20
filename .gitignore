@@ -5,3 +5,4 @@ PDSYEVRnew*
 *.pyc
 test.*
 identical_nodes
+test/element_iterator

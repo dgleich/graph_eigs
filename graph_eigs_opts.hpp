@@ -78,6 +78,10 @@ void usage() {
     "      and do not compute eigenvalues.\n"
     "  --nomarkov  Skip the Markov matrix computation when computing with\n"
     "      the normalized Laplacian.\n"
+    "  --nocommute  Skip the commute time computation when computing with\n"
+    "      the Laplacian matrix.\n"
+    "  --nofiedler  Don't output the Fiedler vector when computing with\n"
+    "      either Laplacian matrix.\n"
     "\n"
     "  -o string, --output=string  Change the default output filename.\n"
     "      This string is used to construct the default output filenames.\n"
@@ -105,6 +109,23 @@ void usage() {
     "\n"
     "  --noresiduals  Skip computing the residuals (not recommended if\n"
     "      the eigenvectors are computed)\n"
+    "\n"
+    "The following options modify the default output for the commute-time\n"
+    "scores.  By default, only the 100 largest and smallest commute-time\n"
+    "values are written to <output>.commute-large and <output>.commute-small,\n"
+    "respectively.  These options change the behavior to output additional\n"
+    "or fewer commute time scores.  Another choice is to write the entire\n"
+    "matrix of commute time scores.\n"
+    "  --commute-scores=int  Change the number of largest and smallest scores\n"
+    "    output to the value of the integer.  The default is 100.\n"
+    "  --commute-all[=filename]  Output a file with all the commute times.\n"
+    "    The optional filename parameter changes the default filename of \n"
+    "    <output>.ctimes.  The format of the file is column-major, with a\n"
+    "    header of <nverts> <nverts>\n"
+    "\n"
+    "The following option controls the eigensolver used.\n"
+    "  --solver qr\n"
+    "  --solver mrrr\n"
     "\n";
     fprintf(stderr, "%s", usage);
 }
@@ -120,6 +141,13 @@ struct graph_eigs_options {
     bool eigenvectors;
     
     bool markov;
+    bool commute;
+    bool fiedler;
+    
+    bool commute_all; // true to output commute-time matrix
+    bool commute_scores; // true to output commute-time score files
+    int ncommute_scores; // the number of commute-time scores to output
+    bool pseudoinverse_diagonals;
     
     enum driver_type {
         qr=1,
@@ -154,12 +182,22 @@ struct graph_eigs_options {
     std::string markov_residuals_filename;
     std::string markov_ipar_filename;
     
+    std::string commute_small_scores_filename;
+    std::string commute_large_scores_filename;
+    std::string commute_all_filename;
+    std::string pseudoinverse_diagonals_filename;
+    
+    std::string fiedler_vector_filename;
+    
     
     graph_eigs_options() 
     : verbose(false),  tridiag(false), 
       residuals(true), iparscores(false), vectors(false),
       eigenvalues(true), eigenvectors(false),
-      markov(true), solver(mrrr), matrix(normalized_laplacian_matrix),
+      markov(true), commute(true), fiedler(true),
+      commute_all(false), commute_scores(true), ncommute_scores(100), 
+      pseudoinverse_diagonals(true),
+      solver(mrrr), matrix(normalized_laplacian_matrix),
       nb(176), minmemory(true)
     {}
     
@@ -172,6 +210,16 @@ struct graph_eigs_options {
             matrix = normalized_laplacian_matrix;
         else if (strcmp("modularity",string)==0) 
             matrix = modularity_matrix;
+        else
+            return false;
+        return true;
+    }
+    
+    bool set_driver_type_from_string(const char *string) {
+        if (strcmp("qr",string)==0) 
+            solver = qr;
+        else if (strcmp("mrrr",string)==0) 
+            solver = mrrr;
         else
             return false;
         return true;
@@ -237,7 +285,7 @@ struct graph_eigs_options {
             if (eigenvalues && _check_filename(markov_values_filename) == false) {
                 printf("Cannot access %s to write Markov eigenvalues\n",
                     markov_values_filename.c_str());
-                    return false;
+                return false;
             }
             
             if (vectors && _check_filename(markov_vectors_filename) == false) {
@@ -249,16 +297,50 @@ struct graph_eigs_options {
             if (residuals && _check_filename(markov_residuals_filename) == false) {
                 printf("Cannot access %s to write Markov residuals\n",
                     markov_residuals_filename.c_str());
-                    return false;
+                return false;
             }
             
             if (iparscores && _check_filename(markov_ipar_filename) == false) {
                 printf("Cannot access %s to write Markov ipar scores\n",
                     markov_ipar_filename.c_str());
-                    return false;
+                return false;
             }
         }
         
+        if ((matrix == normalized_laplacian_matrix ||
+             matrix == laplacian_matrix) && fiedler && eigenvectors) {
+            if (_check_filename(fiedler_vector_filename) == false) {
+                printf("Cannot access %s to write Fiedler vector\n",
+                    fiedler_vector_filename.c_str());
+                return false;
+            }
+        }
+        
+        if (matrix == laplacian_matrix && commute && eigenvectors) {
+            if (_check_filename(commute_large_scores_filename) == false) {
+                printf("Cannot access %s to write large commute times\n",
+                    commute_large_scores_filename.c_str());
+                return false;
+            }
+            
+            if (_check_filename(commute_small_scores_filename) == false) {
+                printf("Cannot access %s to write small commute-times\n",
+                    commute_small_scores_filename.c_str());
+                return false;
+            }
+            
+            if (commute_all && _check_filename(commute_all_filename) == false) {
+                printf("Cannot access %s to write all commute-times\n",
+                    commute_all_filename.c_str());
+                return false;
+            }
+            
+            if (_check_filename(pseudoinverse_diagonals_filename) == false) {
+                printf("Cannot access %s to write pseudo-inverse diagonals\n",
+                    pseudoinverse_diagonals_filename.c_str());
+                return false;
+            }
+        }
         return true;
     }
     
@@ -297,7 +379,20 @@ struct graph_eigs_options {
                 // TODO come up with a better way of handing these cases.
                 assert(false);
             }
-                
+        }
+        
+        if ((matrix == normalized_laplacian_matrix ||
+             matrix == laplacian_matrix) && fiedler && eigenvectors) {
+            fiedler_vector_filename = output_name + ".fiedler";
+        }
+        
+        if (matrix == laplacian_matrix && commute && eigenvectors) {
+            commute_large_scores_filename = output_name + ".commute-large";
+            commute_small_scores_filename = output_name + ".commute-small";
+            if (commute_all && commute_all_filename.size() == 0) {
+                commute_all_filename = output_name + ".ctimes";
+            }
+            pseudoinverse_diagonals_filename = output_name + ".pinvdiags";
         }
         
         if (eigenvalues && values_filename.size() == 0) {
@@ -329,8 +424,10 @@ struct graph_eigs_options {
      * This does NOT distribute filenames.
      */
     void distribute() {    
-        int header[11]={verbose, tridiag, residuals, iparscores, vectors,
-                eigenvalues, eigenvectors, matrix, nb, minmemory, markov};
+        int header[17]={verbose, tridiag, residuals, iparscores, vectors,
+                eigenvalues, eigenvectors, matrix, nb, minmemory, markov, 
+                fiedler, commute, commute_all, commute_scores, ncommute_scores,
+                pseudoinverse_diagonals};
         MPI_Bcast(header, sizeof(header)/sizeof(int), MPI_INT, 0, MPI_COMM_WORLD);
         verbose = header[0];
         tridiag = header[1];
@@ -343,6 +440,12 @@ struct graph_eigs_options {
         nb = header[8];
         minmemory = header[9];
         markov = header[10];
+        fiedler = header[11];
+        commute = header[12];
+        commute_all = header[13];
+        commute_scores = header[14];
+        ncommute_scores = header[15];
+        pseudoinverse_diagonals = header[16];
     }
     
     
@@ -373,6 +476,8 @@ bool parse_command_line_arguments(int argc, char **argv) {
             {"noresiduals", no_argument, NULL, 0},
             {"novalues", no_argument, NULL, 0},
             {"nomarkov", no_argument, NULL, 0},
+            {"nocommute", no_argument, NULL, 0},
+            {"nofiedler", no_argument, NULL, 0},
             /* These do */
             {"blocksize", required_argument, NULL, 'b'},
             {"type", required_argument, NULL, 0},
@@ -382,6 +487,9 @@ bool parse_command_line_arguments(int argc, char **argv) {
             {"residuals", optional_argument, NULL, 'r'},
             {"iparscores", optional_argument, NULL, 'p'},
             {"vectors", optional_argument, NULL, 0},
+            {"solver", required_argument, NULL, 0},
+            {"commute-all", optional_argument, NULL, 0},
+            {"commute-scores", required_argument, NULL, 0},
             {NULL, no_argument, NULL, 0}
         };
     static const char *opt_string = "vhalnmt::r::p::o:b:";
@@ -441,6 +549,10 @@ bool parse_command_line_arguments(int argc, char **argv) {
                     opts.eigenvalues = false;
                 else if (strcmp("nomarkov",long_options[longindex].name)==0) 
                     opts.markov = false;
+                else if (strcmp("nocommute",long_options[longindex].name)==0) 
+                    opts.commute = false;
+                else if (strcmp("nofiedler",long_options[longindex].name)==0) 
+                    opts.fiedler = false;
                 else if (strcmp("values",long_options[longindex].name)==0) {
                     opts.eigenvalues = true;
                     if (optarg) {
@@ -452,7 +564,27 @@ bool parse_command_line_arguments(int argc, char **argv) {
                     if (optarg) {
                         opts.vectors_filename = std::string(optarg);
                     }
-                } else {
+                } else if (strcmp("solver",long_options[longindex].name)==0) {
+                    if (!opts.set_driver_type_from_string(optarg)) {
+                        printf("Invalid solver type: %s\n", optarg);
+                        return false;
+                    }
+                } else if (strcmp("commute-scores",long_options[longindex].name)==0) {
+                    opts.ncommute_scores=atoi(optarg);
+                    if (opts.ncommute_scores <= 0) {
+                        fprintf(stderr,
+                            "The number of commute scores must be positive,\n"
+                            "but --commute-scores=%i <= 0.\n",
+                            opts.ncommute_scores);
+                        return false;
+                    }
+                } else if (strcmp("commute-all",long_options[longindex].name)==0) {
+                    opts.commute_all = true;
+                    if (optarg) {
+                        opts.commute_all_filename = std::string(optarg);
+                    }
+                }
+                else {
                     // we shouldn't ever get here
                     assert(false);
                 }

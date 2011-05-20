@@ -16,10 +16,17 @@
  *   desired scalapack features.
  * :2010-11-14: Added Markov matrix
  * :2010-11-17: Added graph checking
+ * :2011-02-15: Added commute time computation
+ * :2011-03-05: Added commute time score output
+ * :2011-03-06: Added Fiedler computation
+ * :2011-03-08: Added pseudo-inverse diagonal output
+ * 
  * 
  * Todo
  * ----
  * TODO output extremal eigenvalues for checking
+ * TODO add options for pseudoinverse of the diagonal
+ * TODO Add switching eigensolver
  * TODO add report with output:
  *   - graph name
  *   - number of vertices
@@ -86,8 +93,9 @@
 
 #include "triplet_graph.hpp"
 #include "graph_eigs_opts.hpp"
+#include "permutation.hpp"
 
-const int graph_eigs_version = 3;
+const int graph_eigs_version = 4;
 
 void write_header(void) {
     mpi_world_printf("\n");
@@ -205,7 +213,7 @@ bool write_vector(const char* filename, double *a, size_t n) {
         fclose(f);
         return true;
     } else {
-        printf("Could not open %s\n", filename);
+        printf("Error: Could not open %s\n", filename);
         return false;
     }
 }
@@ -230,7 +238,7 @@ bool write_matrix(const char* filename, double *a, size_t m, size_t n) {
         fclose(f);
         return true;
     } else {
-        printf("Could not open %s\n", filename);
+        printf("Error: Could not open %s\n", filename);
         return false;
     }
 }
@@ -352,6 +360,32 @@ void assign_graph_modularity(scalapack_distributed_matrix& A, triplet_data& g)
     
 }
 
+void assign_graph_matrix(triplet_data& g, scalapack_distributed_matrix& A, 
+    graph_eigs_options::matrix_type t)
+{
+    switch (t) {
+        case graph_eigs_options::adjacency_matrix:
+            mpi_world_printf("Constructing the adjacency matrix.\n");
+            assign_graph_adjacency(A, g);
+            break;
+            
+        case graph_eigs_options::laplacian_matrix:
+            mpi_world_printf("Constructing the Laplacian matrix.\n");
+            assign_graph_laplacian(A, g);
+            break;
+            
+        case graph_eigs_options::normalized_laplacian_matrix:
+            mpi_world_printf("Constructing the normalized Laplacian matrix.\n");
+            assign_graph_normalized_laplacian(A, g);
+            break;
+            
+        case graph_eigs_options::modularity_matrix:
+            mpi_world_printf("Constructing the modularity matrix.\n");
+            assign_graph_modularity(A, g);
+            break;
+    }
+}
+
 /** Initialize blacs
  * This is needed for many blacs implementations. 
  */
@@ -399,7 +433,7 @@ void write_data_safely(const char *type, const char* vname, unsigned int indent,
  */
 void find_large_residuals(std::vector<double>& resids, double *scale, double tol)
 {
-    printf("   Checking for residuals larger than %.2e.\n", tol);
+    printf("  Checking for residuals larger than %.2e.\n", tol);
     for (size_t i=0; i<resids.size(); ++i) {
         double err = fabs(resids[i])/(fabs(scale[i])+1.);
         if (err > tol) {
@@ -413,6 +447,217 @@ void find_large_residuals(std::vector<double>& resids, double *scale, double tol
         }
     }
 }
+
+FILE* fopen_with_error(const char* filename, const char* mode) {
+    FILE *f = fopen(filename, mode);
+    if (!f) {
+        fprintf(stderr, "Error: Could not open %s with mode %s\n", 
+            filename, mode);
+    }
+    return f;
+}
+
+/** Output the largest and smallest elements in a matrix to files.
+ * 
+ * Given a matrix, for each column, we output the `nelem` largest
+ * and smallest elements to `large_filename` and `small_filename`,
+ * respectively.  This involves saving each column on one processor
+ * and then sorting the elements, and outputing the respective
+ * sets to each file.  The file format is:
+ * File: Header\n Element*[<nelem>*<ncols>]\n
+ * Header: <nrows> <ncols> <nelem>*<ncols>
+ * Element: <rowid> <colid> <value>\n
+ */
+void write_largest_and_smallest_matrix_column_elements(
+    scalapack_distributed_matrix& A,
+    int nelem,
+    std::string large_filename, std::string small_filename)
+{
+    // check that nelem isn't too large
+    if (nelem > A.m) { nelem = A.m; }
+    
+    // create an iterator which gets a column of the matrix at once,
+    // with a A.m sized buffer
+    scalapack_distributed_matrix_element_iterator iter(A, 1, 1, A.m);
+    
+    //printf("[%3i x %3i] Starting iterator...\n",
+    //     A.myrow, A.mycol);
+    
+    FILE *sfile=NULL, *lfile=NULL;
+    if (iter.root) {
+        sfile = fopen_with_error(small_filename.c_str(), "wt");
+        lfile = fopen_with_error(large_filename.c_str(), "wt");
+        if (!sfile || !lfile) {
+            return;
+        }
+        
+        // write the headers
+        fprintf(sfile, "%i %i %i\n", A.m, A.n, nelem*A.n);
+        fprintf(lfile, "%i %i %i\n", A.m, A.n, nelem*A.n);
+    }    
+    
+    while (iter.next()) {
+        
+        // this will get one column
+        if (iter.root) {
+            //printf("[%3i x %3i] Next column (%i,%i) - (%i,%i)\n",
+            //    A.myrow, A.mycol, iter.istart, iter.jstart, iter.isize, iter.jsize);
+            assert(iter.isize == A.m);
+            assert(iter.jsize == 1);
+            std::vector<int> order(0);
+            sort_permutation(iter.work, order);
+            // the array is now sorted in decreasing order
+            // the largest elements are in iter.work[0:nelem]
+            // the smallest element are in iter.work[end-nelem+1:]
+            
+            assert(nelem <= (int)order.size());
+            
+            // output the largest
+            for (int i=0; i<nelem; ++i) {
+                fprintf(lfile, "%i %i %.18g\n", 
+                    order[i], iter.jstart-1, iter.work[order[i]]);
+            }
+            // output the smallest elements, except for the last element,
+            // which is always the diagonal one.
+            for (int i=0; i<nelem; ++i) {
+                int ei = order.size() - nelem + i;
+                fprintf(sfile, "%i %i %.18g\n",
+                    order[ei], iter.jstart-1, iter.work[order[ei]]);
+            }
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+    
+    if (iter.root) {
+        fclose(sfile);
+        fclose(lfile);
+    }
+}    
+
+/** Compute and output data on commute times.
+ * 
+ * This uses extra work memory used for computing the eigenvalues.
+ * 
+ */
+template <typename EigenSolver>
+void compute_commute_times(scalapack_distributed_matrix& A, EigenSolver &P) {
+    bool root = A.myrow == 0 && A.mycol == 0;
+    if (root) {
+        printf("  Computing commute-time scores\n");
+    }
+    scalapack_distributed_matrix C;
+    if (root) {
+        tlist.start_event("commute");
+    }
+    P.pseudoinverse(C); // compute the pseudo-inverse
+    std::vector<double> diags(A.n,0.);
+    C.diagonals(&diags[0]);
+    
+    int gi, gj;
+    for (int j=0; j<C.aq; ++j) {
+        for (int i=0; i<C.ap; ++i) {
+            C.local2global(i, j, gi, gj);
+            // compute the commute times
+            C.A[i+j*C.ap] = diags[gi] + diags[gj] - 2*C.A[i+j*C.ap];
+            if (gi==gj) {
+                C.A[i+j*C.ap] = 0.;
+            }
+        }
+    }
+    if (root) {
+        tlist.report_event(6);
+    }
+    
+    if (opts.pseudoinverse_diagonals) {
+        if (root) {
+            write_data_safely("pseudoinverse diagonal elements", "pid", 2,
+                opts.pseudoinverse_diagonals_filename.c_str(), 
+                &diags[0], A.n, 1, false);
+        }
+    }
+    
+    if (opts.commute_scores) {
+        if (root) {
+            printf("    Writing %i largest commute-time elements to %s.\n",
+                opts.ncommute_scores, opts.commute_large_scores_filename.c_str());
+            printf("    Writing %i smallest commute-time elements to %s.\n",
+                opts.ncommute_scores, opts.commute_small_scores_filename.c_str());
+        }
+        write_largest_and_smallest_matrix_column_elements(C, 
+            opts.ncommute_scores,
+            opts.commute_large_scores_filename, 
+            opts.commute_small_scores_filename);
+    }
+    
+    if (opts.commute_all) {
+        if (root) {
+            printf("    Writing commute-time matrix to %s.\n",
+                    opts.commute_all_filename.c_str());
+        }
+        C.write(opts.commute_all_filename.c_str(), 0, 0);
+    }
+}    
+
+/** Find the fielder vector
+ * The fiedler vector is the eigenvector for the first non-zero eigenvalue
+ * of a Laplacian matrix.  
+ * 
+ * This function works with the absolute values of the eigenvalues to 
+ * avoid issues with slightly negative eigenvalues exceeding the 
+ * a tolerance.
+ * 
+ * An eigenvalue is considered zero if fabs(lambda) < n*sigmamax*2.2e-16
+ * 
+ * @param fielder 
+ * @param index an output variable for the index of the Fiedler vector
+ * @return true if the Fiedler vector was found.
+ */
+bool find_fiedler(double* values, scalapack_distributed_matrix& Z,
+    double *fiedler, int* index)
+{  
+    // this function does not assume that the eigenvalues are sorted.
+      
+    // first determine the zero eigenvalue tolerance
+    // find the largest eigenvalue value of A
+    double sigmamax = values[0];
+    int imax = 0;
+    for (int i=1; i<Z.n; ++i) {
+        if (fabs(values[i]) > sigmamax) {
+            sigmamax = fabs(values[i]);
+            imax = i;
+        } 
+    }
+    // set the zero tolerance
+    double tol = (double)Z.n*2.2e-16*sigmamax;
+    
+    // now find the smallest non-zero eigenvalue
+    if (sigmamax < 2.2e-16*(double)Z.n) {
+        // there are no non-zero eigenvalues...
+        return false;
+    }
+    
+    double nzmin = sigmamax;
+    int nzind = imax;
+    for (int i=0; i<Z.n; ++i) {
+        if (values[i] > tol && values[i] < nzmin) {
+            nzmin = values[i];
+            nzind = i;
+        }
+    }
+    // get the column
+    if (fiedler) {
+        Z.column(nzind, fiedler);
+    }
+    
+    if (index) {
+        *index = nzind;
+    }
+    
+    return true;
+}
+
+
+
 
 /** Compute data on the Markov matrix from the normalized Laplacian.
  * For an undirected graph, the eigenvalues and vectors of the 
@@ -501,129 +746,24 @@ void output_markov_data(triplet_data& g,
             P.Z.write(opts.markov_vectors_filename, 0, 0);
         }
     }
-}    
+}   
 
-int main_blacs(int argc, char **argv, int nprow, int npcol) 
+template <typename EigenSolver>
+int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A) 
 {
-    int ictxt;
-    int myrow, mycol;
+    int nprow, npcol, myrow, mycol;
+    int n = A.n;
+    Cblacs_gridinfo(A.ictxt, &nprow, &npcol, &myrow, &mycol);
     
-    blacs_init();
+    EigenSolver P(A);
     
-    Cblacs_get(-1,0,&ictxt);
-    Cblacs_gridinit(&ictxt, "R", npcol, npcol);    
-    Cblacs_gridinfo(ictxt, &nprow, &npcol, &myrow, &mycol );
-    
-    if (myrow == -1) {
-        return (0);
+    bool extra = false;
+    if (opts.matrix == opts.laplacian_matrix &&
+        opts.commute && (opts.commute_all || opts.commute_scores)) {
+        extra = true;
     }
     
-    bool root = (myrow == 0 && mycol == 0);
-    
-    // check that this process is in the computational grid and assert otherwise.
-    assert(myrow < nprow);
-    assert(mycol < npcol);
-    
-    triplet_data g;
-    
-    if (root) {
-        const char* gfile = opts.graph_filename.c_str();
-        printf("Loading graph %s.\n", gfile);
-        tlist.start_event("load_graph");
-        if (g.read_smat(gfile) == false) {
-            printf("Error reading %s.\n", gfile);
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-        tlist.end_event(); tlist.report_event(2);
-        
-        printf("\n");
-        printf("Graph information\n");
-        printf("  Vertices: %i\n", g.nrows);
-        printf("  Edges: %i\n", g.nnz);
-        printf("\n");
-        
-        if (opts.verbose) {
-            printf("Checking graph data.\n");
-        }
-        if (g.min_degree() < 1) {
-            printf("Error: the graph has a disconnected vertex.\n");
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-        if (!g.is_symmetric()) {
-            printf("Error: the graph is not-symmetric.\n");
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-        
-        if (opts.verbose) {
-            printf("Broadcasting graph data.\n");
-        }
-        
-    }
-    
-    broadcast_triplet_data(ictxt, g);
-    
-    // we now allocate memory for the dense matrix to store the graph
-    scalapack_distributed_matrix A;
-    int n = g.nrows;
-    if (opts.nb > n) {
-        int newnb = opts.nb;
-        
-        while (newnb>1 && newnb>n/nprow) {
-            newnb = newnb/2;
-        }
-        if (opts.verbose && root) {
-            printf("Adjusting nb=%i to nb=%i because n=%i\n", 
-                opts.nb, newnb, n);
-        }
-        opts.nb = newnb;
-    }
-    A.init(ictxt, n, n, opts.nb, opts.nb);
-    
-    tlist.start_event("construct_matrix");
-    
-    // allocate local storage for the matrix
-    if (opts.verbose) {
-        printf("[%3i x %3i] allocating %Zu bytes for A (n=%i, mb=%i, nb=%i, ap=%i, aq=%i)\n",
-            myrow, mycol, A.bytes(),
-            A.n, A.mb, A.nb, A.ap, A.aq );
-    }
-        
-    if (!A.allocate()) {
-        printf("[%3i x %3i] couldn't allocate memory, exiting...", 
-           myrow, mycol);
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-    
-    switch (opts.matrix) {
-        case graph_eigs_options::adjacency_matrix:
-            mpi_world_printf("Constructing the adjacency matrix.\n");
-            assign_graph_adjacency(A, g);
-            break;
-            
-        case graph_eigs_options::laplacian_matrix:
-            mpi_world_printf("Constructing the Laplacian matrix.\n");
-            assign_graph_laplacian(A, g);
-            break;
-            
-        case graph_eigs_options::normalized_laplacian_matrix:
-            mpi_world_printf("Constructing the normalized Laplacian matrix.\n");
-            assign_graph_normalized_laplacian(A, g);
-            break;
-            
-        case graph_eigs_options::modularity_matrix:
-            mpi_world_printf("Constructing the modularity matrix.\n");
-            assign_graph_modularity(A, g);
-            break;
-    }
-    tlist.end_event();
-    if (root) {
-        tlist.report_event(2);
-    }
-    if (root) { printf("\n"); }
-    
-    scalapack_symmetric_eigen P(A);
-        
-    P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag);
+    P.setup(opts.eigenvectors, opts.minmemory, opts.tridiag, extra);
     
     if (opts.verbose) {
         printf("[%3i x %3i] allocating %Zu bytes for eigenproblem; "
@@ -680,17 +820,50 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
         }
         
         if (opts.eigenvectors) {
+            
             if (opts.vectors) {
                 // write the matrix on the root processor
-                if (root) {
-                    printf("    Writing eigenvectors to %s.\n", 
-                        opts.vectors_filename.c_str());
-                }
+                mpi_world_printf("    Writing eigenvectors to %s.\n",
+                    opts.vectors_filename.c_str());
                 P.Z.write(opts.vectors_filename, 0, 0);
-                write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
+                //write_matrix("test.matrix", P.Z.A, P.Z.aq, P.Z.ap);
+            }
+            
+            // output the Fiedler vector
+            // TODO make this a function
+            if ((opts.matrix == opts.normalized_laplacian_matrix ||
+                opts.matrix == opts.laplacian_matrix) && opts.fiedler) {
+                std::vector<double> fiedler(P.n, 0.);
+                int fvind = 0;
+                bool rval = find_fiedler(P.values, P.Z, &fiedler[0], &fvind);
+                
+                if (rval == false) {
+                    mpi_world_printf("  Could not find fiedler vector.\n");
+                } else {
+                    double lam = P.values[fvind];
+                    double gap0 = 1./0.;
+                    double gap1 = 1./0.;
+                    if (fvind > 0) {
+                        gap0 = lam - P.values[fvind-1];
+                    }
+                    if (fvind < n-1) {
+                        gap1 = P.values[fvind+1] - lam;
+                    }
+                    mpi_world_printf("    Fiedler vector:\n");
+                    mpi_world_printf("      ind=%i\n", fvind);
+                    mpi_world_printf("      lambda=%.18g\n", lam);
+                    mpi_world_printf("      gap0=%8.3e\n", gap0);
+                    mpi_world_printf("      gap1=%8.3e\n", gap1);
+                    if (root) {
+                        write_data_safely("fiedler", "f", 2,
+                            opts.fiedler_vector_filename.c_str(),  
+                            &fiedler[0], n, 1, false);
+                    }
+                }
             }
 
             if (opts.residuals) {
+                mpi_world_printf("    Computing residuals.\n");
                 std::vector<double> resids;
                 tlist.start_event("residuals");
                 P.residuals(resids);
@@ -699,13 +872,15 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
                 
                 if (root) {
                     write_data_safely("residuals", "r", 2,
-                        opts.residuals_filename.c_str(), &resids[0], n, 1, false);
+                        opts.residuals_filename.c_str(), 
+                        &resids[0], n, 1, false);
                 }
                 
                 if (root) {
                     find_large_residuals(resids, P.values, 2.2e-16*P.n);
                 }
             }
+            
             if (opts.iparscores) {
                 std::vector<double> ipars;
                 tlist.start_event("iparscores");
@@ -718,13 +893,127 @@ int main_blacs(int argc, char **argv, int nprow, int npcol)
                         opts.ipar_filename.c_str(), &ipars[0], n, 1, false);
                 }
             }
+            
+            if (opts.matrix == opts.laplacian_matrix && opts.commute) {
+                compute_commute_times(A, P);
+            }
         }
         
         // handle Markov matrix
         if (opts.matrix == opts.normalized_laplacian_matrix && opts.markov) {
             output_markov_data(g, A, P);
         }
+        
+        // 
     }
+    
+    return 0;
+} 
+
+int main_blacs(int argc, char **argv, int nprow, int npcol) 
+{
+    int ictxt;
+    int myrow, mycol;
+    
+    blacs_init();
+    
+    Cblacs_get(-1,0,&ictxt);
+    Cblacs_gridinit(&ictxt, "R", npcol, npcol);    
+    Cblacs_gridinfo(ictxt, &nprow, &npcol, &myrow, &mycol );
+    
+    if (myrow == -1) {
+        return (0);
+    }
+    
+    bool root = (myrow == 0 && mycol == 0);
+    
+    // check that this process is in the computational grid and assert otherwise.
+    assert(myrow < nprow);
+    assert(mycol < npcol);
+    
+    triplet_data g;
+    
+    if (root) {
+        const char* gfile = opts.graph_filename.c_str();
+        printf("Loading graph %s.\n", gfile);
+        tlist.start_event("load_graph");
+        if (g.read_smat(gfile) == false) {
+            printf("Error reading %s.\n", gfile);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        tlist.end_event(); tlist.report_event(2);
+        
+        printf("\n");
+        printf("Graph information\n");
+        printf("  Vertices: %i\n", g.nrows);
+        printf("  Edges: %i\n", g.nnz);
+        printf("\n");
+        
+        if (opts.verbose) {
+            printf("Checking graph data.\n");
+        }
+        if (g.min_degree() < 1) {
+            printf("Error: the graph has a disconnected vertex.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        if (!g.is_symmetric()) {
+            printf("Error: the graph is not-symmetric.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        if (!g.has_repeated_edges()) {
+            printf("Error: the graph has repeated edges.\n");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        
+        if (opts.verbose) {
+            printf("Broadcasting graph data.\n");
+        }
+        
+    }
+    
+    broadcast_triplet_data(ictxt, g);
+    
+    // we now allocate memory for the dense matrix to store the graph
+    scalapack_distributed_matrix A;
+    int n = g.nrows;
+    if (opts.nb > n) {
+        int newnb = opts.nb;
+        
+        while (newnb>1 && newnb>n/nprow) {
+            newnb = newnb/2;
+        }
+        if (opts.verbose && root) {
+            printf("Adjusting nb=%i to nb=%i because n=%i\n", 
+                opts.nb, newnb, n);
+        }
+        opts.nb = newnb;
+    }
+    A.init(ictxt, n, n, opts.nb, opts.nb);
+    
+    tlist.start_event("construct_matrix");
+    
+    // allocate local storage for the matrix
+    if (opts.verbose) {
+        printf("[%3i x %3i] allocating %Zu bytes for A (n=%i, mb=%i, nb=%i, ap=%i, aq=%i)\n",
+            myrow, mycol, A.bytes(),
+            A.n, A.mb, A.nb, A.ap, A.aq );
+    }
+        
+    if (!A.allocate()) {
+        printf("[%3i x %3i] couldn't allocate memory, exiting...", 
+           myrow, mycol);
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    assign_graph_matrix(g, A, opts.matrix);
+    
+    tlist.end_event();
+    if (root) {
+        tlist.report_event(2);
+    }
+    if (root) { printf("\n"); }
+        
+    main_compute<scalapack_symmetric_eigen>(root, g, A);
     
     if (root) {
         printf("\n");
