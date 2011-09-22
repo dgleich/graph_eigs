@@ -22,3 +22,7 @@ patch PBLACS/SRC/PBtools.h ../PBtools.patch
 debuild -us -uc
 
 sudo dpkg --install ../libscalapack-mpi-dev_1.8.0-5_amd64.deb ../libscalapack-mpi1_1.8.0-5_amd64.deb
+
+
+### For the ppa
+# edit 
