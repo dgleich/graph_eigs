@@ -32,6 +32,14 @@ assert(size(A,1)==size(A,2));
 % perhaps make this an option at some point.
 logzero = log10(100*eps);
 
+if numel(nbins)>1
+    userx = true;
+    userx_x = nbins(:)';
+    nbins = 3;
+else
+    userx = false;
+end
+
 switch type
     case 'normalized'
         Dhalf = diag(sparse(1./sqrt(sum(A))));
@@ -59,6 +67,14 @@ switch type
         
     otherwise
         error('graph_eigs:eighistogram','unknown type "%s"', type);
+end
+
+% load the value of x
+% just a quick hack, no real reason, a better architecture
+% would be better
+if userx
+    x = userx_x;
+    x = sort(x);
 end
 
 binedges = x(1:end-1) + diff(x)/2;
