@@ -5,8 +5,7 @@ FC = mpif77
 CC = mpic++
 FFLAGS += $(OPTFLAG) -funroll-loops
 CXXFLAGS += -Wall -DBLACS_ALL -Iinclude -Wno-write-strings $(OPTFLAG)
-LDLIBS += -lscalapack-openmpi -lblacsCinit-openmpi -lblacs-openmpi
-#  -llapack -lblas -latlas
+LDLIBS += -lscalapack-openmpi -lblacsCinit-openmpi -lblacs-openmpi -llapack -lblas -latlas
 
 PSTEGR_SRC := disnan.o   dlar1v.o  dlarrb2.o  dlarrc.o   dlarrd.o    \
               dlarre2.o  dlarrf.o  dlarrv2.o  dstegr2a.o  dstegr2.o    \
@@ -81,7 +80,7 @@ $(eval $(call TEST_template,tiny,))
 $(eval $(call TEST_template,karate,))	
 $(eval $(call TEST_template,tapir,mpirun -np 4))
 $(eval $(call TEST_template,polblogs-sym-cc,))
-$(eval $(call TEST_template,Caltech36,mpirun -np 4))
+#$(eval $(call TEST_template,Caltech36,mpirun -np 4))
 
 test/element_iterator.o: scalapack_symmetric_eigen.cc
 test/element_iterator: test/element_iterator.o 
@@ -90,7 +89,7 @@ test_element_iterator: test/element_iterator
 	mpirun -np 4 test/element_iterator > /dev/null
 
 all_tests_clean += test/element_iterator test/*.inodes
-all_tests += test_element_iterator identical_nodes_test
+all_tests += identical_nodes_test
 
 test: test_tiny test_karate test_element_iterator identical_nodes_test
 
