@@ -6,6 +6,7 @@ CC = mpic++
 FFLAGS += $(OPTFLAG) -funroll-loops
 CXXFLAGS += -Wall -DBLACS_ALL -Iinclude -Wno-write-strings $(OPTFLAG)
 LDLIBS += -lscalapack-openmpi -lblacsCinit-openmpi -lblacs-openmpi -llapack -lblas -latlas
+#LDLIBS += -lscalapack-openmpi -lblacsCinit-openmpi -lblacs-openmpi 
 
 PSTEGR_SRC := disnan.o   dlar1v.o  dlarrb2.o  dlarrc.o   dlarrd.o    \
               dlarre2.o  dlarrf.o  dlarrv2.o  dstegr2a.o  dstegr2.o    \
@@ -32,7 +33,7 @@ identical_nodes.o : triplet_graph.hpp
 identical_nodes : identical_nodes.o 
 
 clean:
-	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o $(PSTEGR)  pdlawrite.o
+	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o  pdsyevr/pdsyevr.o pdsyevr/pdsyevr_tri.o pdsyev_tri.o $(PSTEGR)  pdlawrite.o identical_nodes identical_nodes.o
 	
 clean_test:
 	rm -rf $(all_tests_clean)
@@ -88,7 +89,7 @@ test/element_iterator: test/element_iterator.o
 test_element_iterator: test/element_iterator
 	mpirun -np 4 test/element_iterator > /dev/null
 
-all_tests_clean += test/element_iterator test/*.inodes
+all_tests_clean += test/element_iterator test/element_iterator.o test/*.inodes
 all_tests += identical_nodes_test
 
 test: test_tiny test_karate test_element_iterator identical_nodes_test
