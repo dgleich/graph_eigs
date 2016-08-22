@@ -1,6 +1,6 @@
-      SUBROUTINE PDSYEVR( JOBZ, RANGE, UPLO, N, A, IA, JA, 
+      SUBROUTINE PDSYEVR_TRI( JOBC, JOBZ, RANGE, UPLO, N, A, IA, JA, 
      $                    DESCA, VL, VU, IL, IU, M, NZ, W, Z, IZ,
-     $                    JZ, DESCZ, WORK, LWORK, IWORK, LIWORK,
+     $                    JZ, DESCZ, WORK, LWORK, IWORK, LIWORK, JSTATE,
      $                    INFO )
 
       IMPLICIT NONE
@@ -11,26 +11,31 @@
 *     December 6, 2008
 *
 *     .. Scalar Arguments ..
-      CHARACTER          JOBZ, RANGE, UPLO
+      CHARACTER          JOBC, JOBZ, RANGE, UPLO
       INTEGER            IA, IL, INFO, IU, IZ, JA, JZ, LIWORK, LWORK, M,
      $                   N, NZ
-      DOUBLE PRECISION VL, VU
+      DOUBLE PRECISION   VL, VU
 *     ..
 *     .. Array Arguments ..
-      INTEGER            DESCA( * ), DESCZ( * ), IWORK( * )
+      INTEGER            DESCA( * ), DESCZ( * ), IWORK( * ), JSTATE( * )
       DOUBLE PRECISION   A( * ), W( * ), WORK( * ), Z( * )
 *     ..
 *
 *  Purpose
 *  =======
 *
-*  PDSYEVR computes selected eigenvalues and, optionally, eigenvectors
+*  PDSYEVR_TRI computes selected eigenvalues and, optionally, eigenvectors
 *  of a real symmetric matrix A distributed in 2D blockcyclic format
 *  by calling the recommended sequence of ScaLAPACK routines.  
 *
 *  First, the matrix A is reduced to real symmetric tridiagonal form.
 *  Then, the eigenproblem is solved using the parallel MRRR algorithm.
 *  Last, if eigenvectors have been computed, a backtransformation is done.
+*
+*  In contrast to PDSYEVR, PDSYEVR_TRI is designed to return after the
+*  tridiagonal reduction, then after the eigenvalues are computed,
+*  and finally after the eigenvectors are constructed.  The current
+*  operation is controlled via the JOBC parameter.  
 *
 *  Upon successful completion, each processor stores a copy of all computed
 *  eigenvalues in W. The eigenvector matrix Z is stored in 
@@ -43,8 +48,16 @@
 *  For constructive feedback and comments, please contact cvoemel@lbl.gov
 *  C. Voemel
 *
+*  Modifiations for early return were done by David F. Gleich
+*  dfgleic@sandia.gov
+*
 *  Arguments
 *  =========
+*
+*  JOBC    (global input) CHARACTER*1
+*          Specifies the current job to complete
+*          = 'T': Compute the tridiagonal reduction
+*          = 'D': Solve the remaining eigenproblem
 *
 *  JOBZ    (global input) CHARACTER*1
 *          Specifies whether or not to compute the eigenvectors:
@@ -163,13 +176,13 @@
 *             required to compute eigenvalues and eigenvectors.
 *
 *  LWORK   (local input) INTEGER
-*          Size of WORK, must be at least 3.
+*          Size of WORK, must be at least 6.
 *          See below for definitions of variables used to define LWORK.
 *          If no eigenvectors are requested (JOBZ = 'N') then
-*             LWORK >= 2 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
+*             LWORK >= 5 + 5*N + MAX( 12 * NN, NB * ( NP0 + 1 ) )
 *          If eigenvectors are requested (JOBZ = 'V' ) then
 *             the amount of workspace required is:
-*             LWORK >= 2 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
+*             LWORK >= 5 + 5*N + MAX( 18*NN, NP0 * MQ0 + 2 * NB * NB ) +
 *               (2 + ICEIL( NEIG, NPROW*NPCOL))*NN
 *
 *          Variable definitions:
@@ -210,6 +223,21 @@
 *          and optimal size for all work arrays. Each of these
 *          values is returned in the first entry of the corresponding
 *          work array, and no error message is issued by PXERBLA.
+*
+*  JSTATE  (global input/output) INTEGER array
+*          This array describes any state information preserved 
+*          between calls as JOBC changes.  
+*          If JOBC='T' then 
+*             JSTATE(1) = starting index of diagonal entries in work
+*             JSTATE(2) = starting index of off-diagonal entries in work
+*             JSTATE(3) = offset for JSTATE(2)
+*          That is,
+*             D = work( JSTATE(1):JSTATE(1)+N )
+*             E = work( JSTATE(2)+JSTATE(3):JSTATE(2)+N-1+JSTATE(3) )
+*          If JOBC='D' this array must be unchanged from
+*          the prior call.
+*
+*          The minimum length must be 3.
 *
 *  INFO    (global output) INTEGER
 *          = 0:  successful exit
@@ -301,7 +329,8 @@
 *     ..
 *     .. Local Scalars ..
       LOGICAL            ALLEIG, COLBRT, DOBCST, FINISH, FIRST, INDEIG,
-     $                   LOWER, LQUERY, VALEIG, VSTART, WANTZ
+     $                   LOWER, LQUERY, VALEIG, VSTART, WANTZ, JTRIDIA,
+     $                   JFULEIG
       INTEGER            ANB, DOL, DOU, DSTCOL, DSTROW, EIGCNT, FRSTCL,
      $                   I, IAROW, ICTXT, IIL, IINDERR, IINDWLC, IINFO,
      $                   IIU, IM, INDD, INDD2, INDE, INDE2, INDERR,
@@ -330,8 +359,8 @@
 *     ..
 *     .. External Subroutines ..
       EXTERNAL            BLACS_GRIDINFO, CHK1MAT, DCOPY, DGEBR2D,
-     $                    DGEBS2D, DGERV2D, DGESD2D, DLARRC_CV, DLASRT2,
-     $                    DSTEGR2A_CV, DSTEGR2B_CV, DSTEGR2_CV, IGEBR2D,
+     $                    DGEBS2D, DGERV2D, DGESD2D, DLARRC, DLASRT2,
+     $                    DSTEGR2A, DSTEGR2B, DSTEGR2, IGEBR2D,
      $                    IGEBS2D, IGERV2D, IGESD2D, IGSUM2D, PCHK1MAT,
      $                    PCHK2MAT, PDELGET, PDLAEVSWP, PDLARED1D,
      $                    PDORMTR, PDSYNTRD, PXERBLA
@@ -355,6 +384,9 @@
       VALEIG = LSAME( RANGE, 'V' )
       INDEIG = LSAME( RANGE, 'I' )
       LQUERY = ( LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )
+      
+      JTRIDIA = LSAME( JOBC, 'T' )
+      JFULEIG = LSAME( JOBC, 'A' )
 
 ***********************************************************************
 *
@@ -369,7 +401,7 @@
 *     Set up pointers into the WORK array
 *     
 ***********************************************************************
-      INDTAU = 1
+      INDTAU = 4
       INDD = INDTAU + N
       INDE = INDD + N + 1
       INDD2 = INDE + N + 1
@@ -576,6 +608,8 @@
          VLL = ZERO
          VUU = ZERO
       END IF
+
+      IF( JTRIDIA .OR. JFULEIG ) THEN
 *
 *     No scaling done here, leave this to MRRR kernel.
 *     Scale tridiagonal rather than full matrix.
@@ -585,50 +619,58 @@
 *     REDUCE SYMMETRIC MATRIX TO TRIDIAGONAL FORM.
 *
 ***********************************************************************
+      
+          CALL PDSYNTRD( UPLO, N, A, IA, JA, DESCA, WORK( INDD ),
+     $                   WORK( INDE ), WORK( INDTAU ), WORK( INDWORK ),
+     $                   LLWORK, IINFO )
 
 
-      CALL PDSYNTRD( UPLO, N, A, IA, JA, DESCA, WORK( INDD ),
-     $               WORK( INDE ), WORK( INDTAU ), WORK( INDWORK ),
-     $               LLWORK, IINFO )
-
-
-      IF (IINFO .NE. 0) THEN
-         CALL PXERBLA( ICTXT, 'PDSYNTRD', -IINFO )
-         RETURN
-      END IF
+          IF (IINFO .NE. 0) THEN
+             CALL PXERBLA( ICTXT, 'PDSYNTRD', -IINFO )
+             RETURN
+          END IF
 
 ***********************************************************************
 *
 *     DISTRIBUTE TRIDIAGONAL TO ALL PROCESSORS
 *
 ***********************************************************************
-      OFFSET = 0
-      IF( IA.EQ.1 .AND. JA.EQ.1 .AND. 
-     $    DESCA( RSRC_ ).EQ.0 .AND. DESCA( CSRC_ ).EQ.0 )
-     $   THEN
-         CALL PDLARED1D( N, IA, JA, DESCA, WORK( INDD ), WORK( INDD2 ),
-     $                   WORK( INDWORK ), LLWORK )
+          OFFSET = 0
+          IF( IA.EQ.1 .AND. JA.EQ.1 .AND. 
+     $        DESCA( RSRC_ ).EQ.0 .AND. DESCA( CSRC_ ).EQ.0 )
+     $    THEN
+              CALL PDLARED1D( N, IA, JA, DESCA, WORK( INDD ), 
+     $                        WORK( INDD2 ), WORK( INDWORK ), LLWORK )
 *
-         CALL PDLARED1D( N, IA, JA, DESCA, WORK( INDE ), WORK( INDE2 ),
-     $                   WORK( INDWORK ), LLWORK )
-         IF( .NOT.LOWER )
-     $      OFFSET = 1
+              CALL PDLARED1D( N, IA, JA, DESCA, WORK( INDE ), 
+     $                        WORK( INDE2 ), WORK( INDWORK ), LLWORK )
+              IF( .NOT.LOWER )
+     $            OFFSET = 1
+          ELSE
+             DO 10 I = 1, N
+                CALL PDELGET( 'A', ' ', WORK( INDD2+I-1 ), A, I+IA-1,
+     $                        I+JA-1, DESCA )
+   10        CONTINUE
+             IF( LSAME( UPLO, 'U' ) ) THEN
+                DO 20 I = 1, N - 1
+                   CALL PDELGET( 'A', ' ', WORK( INDE2+I-1 ), A, I+IA-1,
+     $                           I+JA, DESCA )
+   20           CONTINUE
+             ELSE
+                DO 30 I = 1, N - 1
+                   CALL PDELGET( 'A', ' ', WORK( INDE2+I-1 ), A, I+IA,
+     $                           I+JA-1, DESCA )
+   30           CONTINUE
+             END IF
+          END IF
+          JSTATE(1) = INDD2
+          JSTATE(2) = INDE2
+          JSTATE(3) = OFFSET
+          IF ( JTRIDIA ) THEN
+              RETURN
+          END IF
       ELSE
-         DO 10 I = 1, N
-            CALL PDELGET( 'A', ' ', WORK( INDD2+I-1 ), A, I+IA-1,
-     $                    I+JA-1, DESCA )
-   10    CONTINUE
-         IF( LSAME( UPLO, 'U' ) ) THEN
-            DO 20 I = 1, N - 1
-               CALL PDELGET( 'A', ' ', WORK( INDE2+I-1 ), A, I+IA-1,
-     $                       I+JA, DESCA )
-   20       CONTINUE
-         ELSE
-            DO 30 I = 1, N - 1
-               CALL PDELGET( 'A', ' ', WORK( INDE2+I-1 ), A, I+IA,
-     $                       I+JA-1, DESCA )
-   30       CONTINUE
-         END IF
+          OFFSET = JSTATE(3)
       END IF
 
 
@@ -646,7 +688,7 @@
          IIL = IL
          IIU = IU
       ELSE IF ( VALEIG ) THEN
-         CALL DLARRC_CV('T', N, VLL, VUU, WORK( INDD2 ), 
+         CALL DLARRC('T', N, VLL, VUU, WORK( INDD2 ), 
      $    WORK( INDE2 + OFFSET ), SAFMIN, EIGCNT, IIL, IIU, INFO)
 *        Refine upper bound N that was taken 
          MZ = EIGCNT
@@ -676,7 +718,7 @@
 *
 *     Each processor computes the work assignments for all processors
 *
-      CALL CMPIM2( IIL, IIU, NPROCS,
+      CALL PMPIM2( IIL, IIU, NPROCS,
      $             IWORK(INDILU), IWORK(INDILU+NPROCS) )
 *
 *     Find local work assignment
@@ -702,7 +744,7 @@
          IF ( MYIL.GT.0 ) THEN
             DOL = 1
             DOU = MYIU - MYIL + 1
-            CALL DSTEGR2_CV( JOBZ, 'I', N,  WORK( INDD2 ),
+            CALL DSTEGR2( JOBZ, 'I', N,  WORK( INDD2 ),
      $                  WORK( INDE2+OFFSET ), VLL, VUU, MYIL, MYIU,
      $                  IM, W( 1 ), WORK( INDRW ), N, 
      $                  MYIU - MYIL + 1,
@@ -730,7 +772,7 @@
          IF ( MYIL.GT.0 ) THEN
             DOL = MYIL - IIL + 1
             DOU = MYIU - IIL + 1
-            CALL DSTEGR2_CV( JOBZ, 'I', N,  WORK( INDD2 ),
+            CALL DSTEGR2( JOBZ, 'I', N,  WORK( INDD2 ),
      $                  WORK( INDE2+OFFSET ), VLL, VUU, IIL, IIU,
      $                  IM, W( 1 ), WORK( INDRW ), N, 
      $                  N,
@@ -753,7 +795,7 @@
          IF ( MYIL.GT.0 ) THEN
             DOL = MYIL - IIL + 1
             DOU = MYIU - IIL + 1
-            CALL DSTEGR2A_CV( JOBZ, 'I', N,  WORK( INDD2 ),
+            CALL DSTEGR2A( JOBZ, 'I', N,  WORK( INDD2 ),
      $                  WORK( INDE2+OFFSET ), VLL, VUU, IIL, IIU,
      $                  IM, W( 1 ), WORK( INDRW ), N, 
      $                  N, WORK( INDWORK ), SIZE1, 
@@ -864,7 +906,7 @@ C        Part 2. Share eigenvalues and uncertainties between all processors
 *
 *           Find collaborators of MYPROC            
             IF( (NPROCS.GT.1).AND.(MYIL.GT.0) ) THEN
-               CALL CMPCOL( MYPROC, NPROCS, IIL, NEEDIL, NEEDIU, 
+               CALL PMPCOL( MYPROC, NPROCS, IIL, NEEDIL, NEEDIU, 
      $                   IWORK(INDILU), IWORK(INDILU+NPROCS),
      $                   COLBRT, FRSTCL, LASTCL )
             ELSE
@@ -938,7 +980,7 @@ C        Part 2. Share eigenvalues and uncertainties between all processors
 *      
  100     CONTINUE
          IF ( MYIL.GT.0 ) THEN
-            CALL DSTEGR2B_CV( JOBZ, N,  WORK( INDD2 ),
+            CALL DSTEGR2B( JOBZ, N,  WORK( INDD2 ),
      $                  WORK( INDE2+OFFSET ), 
      $                  IM, W( 1 ), WORK( INDRW ), N, N,
      $                  IWORK( 1 ), WORK( INDWORK ), SIZE1, 
@@ -950,7 +992,7 @@ C        Part 2. Share eigenvalues and uncertainties between all processors
             IINDWLC = INDWORK + INDWLC - 1
             IF(.NOT.FINISH) THEN
                IF((NEEDIL.LT.DOL).OR.(NEEDIU.GT.DOU)) THEN
-                  CALL CMPCOL( MYPROC, NPROCS, IIL, NEEDIL, NEEDIU,
+                  CALL PMPCOL( MYPROC, NPROCS, IIL, NEEDIL, NEEDIU,
      $                 IWORK(INDILU), IWORK(INDILU+NPROCS),
      $                   COLBRT, FRSTCL, LASTCL )
                ELSE
@@ -1165,167 +1207,4 @@ C        Part 2. Share eigenvalues and uncertainties between all processors
 *
 *     End of PDSYEVR
 *
-      END
-
-***********************************************************************
-*
-*     Below are auxiliary subroutines for eigenpair assignments.
-*     
-*
-***********************************************************************
-      SUBROUTINE CMPIM2( IL, IU, NPROCS, PMYILS, PMYIUS )
-
-      IMPLICIT NONE
-
-      INTEGER IL, IU, M, NPROCS, PRCCTR
-      INTEGER PMYILS( * ), PMYIUS( * )
-*
-*     Purpose
-*     =======
-*
-*     CMPIM2 is the scheduling subroutine.
-*     It computes for all processors the eigenpair range assignments.
-*
-*     Arguments
-*     =========
-*
-*     IL, IU  (input) INTEGER
-*             The range of eigenpairs to be computed
-*
-*     NPROCS  (input) INTEGER
-*             The total number of processors available
-*
-*     PMYILS  (output) INTEGER array
-*             For each processor p,  PMYILS(p) is the index 
-*             of the first eigenvalue in W to be computed
-*             PMYILS(p) equals zero if p stays idle
-*
-*     PMYIUS  (output) INTEGER array
-*             For each processor p,  PMYIUS(p) is the index
-*             of the last eigenvalue in W to be computed
-*             PMYIUS(p) equals zero if p stays idle
-*
-
-      M = IU - IL + 1
-
-      IF ( NPROCS.GT.M ) THEN
-         DO 10 PRCCTR = 0, NPROCS-1
-            IF ( PRCCTR.LT.M ) THEN
-               PMYILS(PRCCTR+1) = PRCCTR + IL
-               PMYIUS(PRCCTR+1) = PRCCTR + IL
-            ELSE
-               PMYILS(PRCCTR+1) = 0
-               PMYIUS(PRCCTR+1) = 0
-            END IF
- 10      CONTINUE
-      ELSE
-         DO 20 PRCCTR = 0, NPROCS-1
-            PMYILS(PRCCTR+1) = (PRCCTR * (M / NPROCS)) + IL
-            IF (PRCCTR.LT.MOD(M, NPROCS)) THEN
-               PMYILS(PRCCTR+1) = PMYILS(PRCCTR+1) + PRCCTR
-               PMYIUS(PRCCTR+1) = PMYILS(PRCCTR+1) + M / NPROCS
-            ELSE
-               PMYILS(PRCCTR+1) = PMYILS(PRCCTR+1) + MOD(M, NPROCS)
-               PMYIUS(PRCCTR+1) = PMYILS(PRCCTR+1) + M / NPROCS - 1
-            END IF
- 20      CONTINUE
-      END IF
-
-      RETURN
-      END
-
-
-      SUBROUTINE CMPCOL( MYPROC, NPROCS, IIL, NEEDIL, NEEDIU, 
-     $                   PMYILS, PMYIUS,
-     $                   COLBRT, FRSTCL, LASTCL )
-
-      IMPLICIT NONE
-
-      INTEGER            FRSTCL, IIL, LASTCL, MYPROC, NEEDIL, NEEDIU,
-     $                   NPROCS
-      INTEGER PMYILS( * ), PMYIUS( * )
-      LOGICAL COLBRT
-*
-*     Purpose
-*     =======
-*
-*     Using the output from CMPIM2 and given the information on
-*     eigenvalue clusters, CMPCOL finds the collaborators of MYPROC.
-*
-*     Arguments
-*     =========
-*
-*     MYPROC  (input) INTEGER
-*             The processor number, 0 <= MYPROC < NPROCS
-*
-*     NPROCS  (input) INTEGER
-*             The total number of processors available
-*
-*     IIL     (input) INTEGER
-*             The index of the leftmost eigenvalue in W
-*
-*     NEEDIL  (input) INTEGER
-*             The leftmost position in W needed by MYPROC
-*
-*     NEEDIU  (input) INTEGER
-*             The rightmost position in W needed by MYPROC
-*
-*     PMYILS  (input) INTEGER array
-*             For each processor p,  PMYILS(p) is the index
-*             of the first eigenvalue in W to be computed
-*             PMYILS(p) equals zero if p stays idle
-*
-*     PMYIUS  (input) INTEGER array
-*             For each processor p,  PMYIUS(p) is the index
-*             of the last eigenvalue in W to be computed
-*             PMYIUS(p) equals zero if p stays idle
-*
-*     COLBRT  (output) LOGICAL
-*             TRUE if MYPROC collaborates.
-*
-*     FRSTCL  (output) INTEGER
-*     LASTCL  FIRST and LAST collaborator of MYPROC   
-*             MYPROC collaborates with
-*             FRSTCL, ..., MYPROC-1, MYPROC+1, ...,LASTCL 
-*             If MYPROC == FRSTCL, there are no collaborators 
-*             on the left. IF MYPROC == LASTCL, there are no
-*             collaborators on the right.
-*             If FRSTCL == 0 and LASTCL = NPROCS-1, then
-*             MYPROC collaborates with everybody
-*
-      INTEGER I, NEEDIIL, NEEDIIU
-
-*     Compute global eigenvalue index from position in W
-      NEEDIIL = NEEDIL + IIL - 1
-      NEEDIIU = NEEDIU + IIL - 1
-
-
-*     Find processor responsible for NEEDIL, this is the first
-*     collaborator
-      DO 1 I = 1, NPROCS
-         IF( PMYILS(I).GT.NEEDIIL) GOTO 2
-         FRSTCL = I-1
- 1    CONTINUE
- 2    CONTINUE
-
-*     Find processor responsible for NEEDIU, this is the last
-*     collaborator
-      DO 3 I = NPROCS,1,-1
-         IF( PMYIUS(I).LT.NEEDIIU ) THEN  
-*          Need to check special case: does this proc work at all?
-           IF( PMYIUS(I).GT.0 )
-     $        GOTO 4
-         ENDIF
-         LASTCL = I-1
- 3    CONTINUE
- 4    CONTINUE
-
-*     Decide if there is a collaboration
-      IF( (FRSTCL.LT.MYPROC).OR.(LASTCL.GT.MYPROC) ) THEN
-         COLBRT = .TRUE.
-      ELSE
-         COLBRT = .FALSE.
-      ENDIF
-
-      RETURN
       END
