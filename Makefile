@@ -24,7 +24,7 @@ identical_nodes.o : triplet_graph.hpp
 identical_nodes : identical_nodes.o 
 
 clean:
-	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o pdsyevr_tri.o  pdsyev_tri.o  pdlawrite.o
+	rm -rf graph_eigs graph_eigs.o lapeigs lapeigs.o mpiutil.o  pdsyevr_tri.o pdsyev_tri.o pdlawrite.o identical_nodes identical_nodes.o
 	
 clean_test:
 	rm -rf $(all_tests_clean)
@@ -80,11 +80,11 @@ test/element_iterator: test/element_iterator.o
 test_element_iterator: test/element_iterator
 	mpirun -np 4 test/element_iterator > /dev/null
 
-all_tests_clean += test/element_iterator test/*.inodes
+all_tests_clean += test/element_iterator test/element_iterator.o test/*.inodes
 all_tests += identical_nodes_test
 
 test: test_tiny test_karate test_element_iterator identical_nodes_test
 
 all_tests: $(all_tests)
 
-	
+

@@ -438,7 +438,7 @@ def compare_commute_scores(F,X,cset):
             i = nz[0]
             v = nz[1]
             diff = False
-            d = abs(x[myset[ei]] - v)/abs(v)
+            d = abs(x[myset[ei]] - v)/abs(v+1.)
             # this function can't check the set elements because
             # of the issue with ties or near ties
             if d > 10*2.2e-16*n:
@@ -463,7 +463,7 @@ def compare_commute_all(C,F):
     for i in xrange(F.shape[0]):
         for j in xrange(F.shape[1]):
             assert(F[i,j] >= 0.) # must be non-negative
-            d = abs(C[i,j] - F[i,j])/abs(C[i,j])
+            d = abs(C[i,j] - F[i,j])/abs(C[i,j]+1.)
             if d > 10*2.2e-16*n:
                 print >>sys.stderr, ("Commute time %i, %i "%(i,j) +
                     "is different, reldiff=%.18e, file=%.18e, numpy=%.18e"%(
