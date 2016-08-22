@@ -166,7 +166,7 @@ def commute_time(graph):
     """
     L = laplacian_matrix(graph)
     C = scipy.linalg.pinv2(L)
-    d = C.diagonal()
+    d = numpy.copy(C.diagonal())
     # TODO find a better way to do this
     for i in xrange(C.shape[0]):
         for j in xrange(C.shape[1]):
