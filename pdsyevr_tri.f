@@ -619,7 +619,8 @@
 *     REDUCE SYMMETRIC MATRIX TO TRIDIAGONAL FORM.
 *
 ***********************************************************************
-      
+
+
           CALL PDSYNTRD( UPLO, N, A, IA, JA, DESCA, WORK( INDD ),
      $                   WORK( INDE ), WORK( INDTAU ), WORK( INDWORK ),
      $                   LLWORK, IINFO )
@@ -640,10 +641,12 @@
      $        DESCA( RSRC_ ).EQ.0 .AND. DESCA( CSRC_ ).EQ.0 )
      $    THEN
               CALL PDLARED1D( N, IA, JA, DESCA, WORK( INDD ), 
-     $                        WORK( INDD2 ), WORK( INDWORK ), LLWORK )
+     $                        WORK( INDD2 ), 
+     $                        WORK( INDWORK ), LLWORK )
 *
               CALL PDLARED1D( N, IA, JA, DESCA, WORK( INDE ), 
-     $                        WORK( INDE2 ), WORK( INDWORK ), LLWORK )
+     $                        WORK( INDE2 ), 
+     $                        WORK( INDWORK ), LLWORK )
               IF( .NOT.LOWER )
      $            OFFSET = 1
           ELSE
@@ -1159,7 +1162,7 @@ C        Part 2. Share eigenvalues and uncertainties between all processors
          IWORK( 1 ) = 0
          DO 180 I = 1, NPROCS
 *           Find IL and IU for processor i-1
-*           Has already been computed by CMPIM2 and stored
+*           Has already been computed by PMPIM2 and stored
             IPIL = IWORK(INDILU+I-1)
             IPIU = IWORK(INDILU+NPROCS+I-1)
             IF (IPIL .EQ. 0) THEN

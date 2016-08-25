@@ -70,7 +70,7 @@ endef
 
 $(eval $(call TEST_template,tiny,))	
 $(eval $(call TEST_template,karate,))	
-$(eval $(call TEST_template,tapir,mpirun -np 4))
+$(eval $(call TEST_template,tapir,OMP_NUM_THREADS=1 mpirun -np 4))
 $(eval $(call TEST_template,polblogs-sym-cc,))
 #$(eval $(call TEST_template,Caltech36,mpirun -np 4))
 
