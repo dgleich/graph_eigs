@@ -1,21 +1,12 @@
 
 OPTFLAG = -O3
-CXX = mpicxx
+CXX = mpic++
 FC = mpif90
-CC = mpicxx
+CC = mpic++
 FFLAGS += $(OPTFLAG) -funroll-loops
 CXXFLAGS += -Wall -DBLACS_ALL -Iinclude -Wno-write-strings $(OPTFLAG)
-LDLIBS +=  ${MKLROOT}/lib/intel64/libmkl_scalapack_lp64.a \
-			-Wl,--start-group \
-				${MKLROOT}/lib/intel64/libmkl_intel_lp64.a \
-				${MKLROOT}/lib/intel64/libmkl_core.a \
-				${MKLROOT}/lib/intel64/libmkl_sequential.a \
-				${MKLROOT}/lib/intel64/libmkl_blacs_intelmpi_lp64.a \
-			-Wl,--end-group \
-			-lpthread -lm -ldl
 #LDLIBS += -Llapack/lapack-3.6.1 -Lscalapack/scalapack-2.0.2 -lscalapack -llapack -lblas -lgfortran
-#LDLIBS += -Lscalapack/scalapack-2.0.2 -lscalapack -llapack -lblas -lgfortran
-
+LDLIBS += -Lscalapack/scalapack-2.0.2 -lscalapack -llapack -lblas -lgfortran
 
 all : lapeigs graph_eigs identical_nodes
 
