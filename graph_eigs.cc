@@ -790,6 +790,15 @@ int main_compute(bool root, triplet_data& g, scalapack_distributed_matrix& A)
         } else {
             mpi_world_printf("Computing eigenvalues and eigenvectors.\n");
         }
+
+        // this is for debugging issues with pdsyevr_tri
+        // mpi_world_printf("  Full eigensolve.\n");
+        //tlist.start_event("full eigensolve");
+        //P.compute();
+        //tlist.end_event();
+        
+        
+        
             
         mpi_world_printf("  Reducing to tridiagonal.\n");
         
